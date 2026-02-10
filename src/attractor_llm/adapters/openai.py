@@ -90,9 +90,9 @@ class OpenAIAdapter:
         if request.top_p is not None:
             body["top_p"] = request.top_p
 
-        # Seed
-        if request.seed is not None:
-            body["seed"] = request.seed
+        # Note: Responses API does not support `seed`. Callers who need
+        # deterministic output should use provider_options["openai"]["seed"]
+        # with Chat Completions via the openai_compat adapter (not this one).
 
         # Tools
         if request.tools:
@@ -120,9 +120,9 @@ class OpenAIAdapter:
         if request.reasoning_effort:
             body["reasoning"] = {"effort": request.reasoning_effort}
 
-        # Response format
+        # Response format (Responses API uses text.format, not response_format)
         if request.response_format:
-            body["response_format"] = request.response_format
+            body["text"] = {"format": request.response_format}
 
         # Provider-specific options
         openai_opts = (request.provider_options or {}).get("openai", {})
@@ -285,9 +285,14 @@ class OpenAIAdapter:
                                 )
                             )
 
-        # Map finish reason
+        # Map finish reason -- detect tool calls from content inspection
+        # since Responses API uses "completed" for both text and tool-call completions
         status = data.get("status", "completed")
-        finish_reason = self._map_finish_reason(status)
+        has_tool_calls = any(p.kind == ContentPartKind.TOOL_CALL for p in content_parts)
+        if status == "completed" and has_tool_calls:
+            finish_reason = FinishReason.TOOL_CALLS
+        else:
+            finish_reason = self._map_finish_reason(status, data)
 
         # Parse usage
         usage_data = data.get("usage", {})
@@ -310,14 +315,21 @@ class OpenAIAdapter:
             raw=data,
         )
 
-    def _map_finish_reason(self, status: str) -> FinishReason:
+    def _map_finish_reason(self, status: str, data: dict[str, Any] | None = None) -> FinishReason:
         """Map OpenAI Responses API status to unified FinishReason."""
         match status:
             case "completed":
                 return FinishReason.STOP
             case "incomplete":
+                # Distinguish content-filter truncation from max-tokens
+                if data:
+                    reason = data.get("incomplete_details", {}).get("reason", "")
+                    if reason == "content_filter":
+                        return FinishReason.CONTENT_FILTER
                 return FinishReason.MAX_TOKENS
             case "failed":
+                return FinishReason.ERROR
+            case "cancelled":
                 return FinishReason.ERROR
             case _:
                 return FinishReason.STOP

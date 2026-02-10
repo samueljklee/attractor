@@ -53,6 +53,7 @@ class GeminiAdapter:
             timeout=httpx.Timeout(config.timeout, connect=10.0),
             headers={
                 "Content-Type": "application/json",
+                "x-goog-api-key": config.api_key,
                 **config.default_headers,
             },
         )
@@ -63,7 +64,9 @@ class GeminiAdapter:
 
     def _endpoint(self, model: str, method: str = "generateContent") -> str:
         """Build the Gemini API endpoint URL."""
-        return f"{self._base_url}/v1beta/models/{model}:{method}?key={self._config.api_key}"
+        # API key is in the x-goog-api-key header (set in __init__), not the URL.
+        # This avoids leaking the key into logs, tracebacks, and proxy access logs.
+        return f"{self._base_url}/v1beta/models/{model}:{method}"
 
     # ------------------------------------------------------------------ #
     # Request translation (Unified -> Gemini)
@@ -265,10 +268,22 @@ class GeminiAdapter:
                 if translated:
                     content_parts.append(translated)
 
-            # Map finish reason
-            finish_reason = self._map_finish_reason(candidate.get("finishReason", "STOP"))
+            # Map finish reason -- detect tool calls from content inspection
+            # since Gemini uses "STOP" for both text and function-call completions
+            raw_reason = candidate.get("finishReason", "STOP")
+            has_tool_calls = any(p.kind == ContentPartKind.TOOL_CALL for p in content_parts)
+            if raw_reason == "STOP" and has_tool_calls:
+                finish_reason = FinishReason.TOOL_CALLS
+            else:
+                finish_reason = self._map_finish_reason(raw_reason)
         else:
-            finish_reason = FinishReason.ERROR
+            # No candidates -- check for prompt-level safety block
+            prompt_feedback = data.get("promptFeedback", {})
+            block_reason = prompt_feedback.get("blockReason")
+            if block_reason:
+                finish_reason = FinishReason.CONTENT_FILTER
+            else:
+                finish_reason = FinishReason.ERROR
 
         # Parse usage
         usage_meta = data.get("usageMetadata", {})
@@ -314,8 +329,17 @@ class GeminiAdapter:
                 return FinishReason.STOP
             case "MAX_TOKENS" | "FINISH_REASON_MAX_TOKENS":
                 return FinishReason.MAX_TOKENS
-            case "SAFETY" | "FINISH_REASON_SAFETY":
+            case (
+                "SAFETY"
+                | "FINISH_REASON_SAFETY"
+                | "RECITATION"
+                | "BLOCKLIST"
+                | "PROHIBITED_CONTENT"
+                | "SPII"
+            ):
                 return FinishReason.CONTENT_FILTER
+            case "MALFORMED_FUNCTION_CALL":
+                return FinishReason.ERROR
             case _:
                 return FinishReason.STOP
 
