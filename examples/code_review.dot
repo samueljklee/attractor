@@ -1,0 +1,33 @@
+// Code review pipeline: Implement, review, iterate if needed
+// Demonstrates goal gates and retry loops
+// Usage: attractor run examples/code_review.dot
+
+digraph CodeReview {
+    graph [
+        goal="Write a Python class for a thread-safe LRU cache",
+        max_goal_gate_redirects="3"
+    ]
+
+    start [shape=ellipse, label="Start"]
+
+    implement [
+        shape=box,
+        label="Implement",
+        prompt="Write clean, well-documented Python code for: $goal. Include type hints and docstrings."
+    ]
+
+    review [
+        shape=box,
+        label="Code Review",
+        prompt="Review this code critically. List any bugs, missing edge cases, or improvements. If good, say APPROVED. If not, say NEEDS_FIXES and list what to fix."
+    ]
+
+    done [
+        shape=Msquare,
+        label="Done",
+        goal_gate="outcome = success",
+        retry_target="implement"
+    ]
+
+    start -> implement -> review -> done
+}

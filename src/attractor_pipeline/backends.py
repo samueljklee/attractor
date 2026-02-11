@@ -84,16 +84,22 @@ class AgentLoopBackend:
         # Create tools list
         tools = list(ALL_CORE_TOOLS) if self._include_tools else []
 
-        # Run session
-        async with Session(
-            client=self._client,
-            config=config,
-            tools=tools,
-            abort_signal=abort_signal,
-        ) as session:
-            result = await session.submit(prompt)
+        # Run session with error handling
+        try:
+            async with Session(
+                client=self._client,
+                config=config,
+                tools=tools,
+                abort_signal=abort_signal,
+            ) as session:
+                result = await session.submit(prompt)
+        except Exception as exc:  # noqa: BLE001
+            return HandlerResult(
+                status=Outcome.FAIL,
+                failure_reason=f"{type(exc).__name__}: {exc}",
+            )
 
-        # Check for error responses
+        # Check for session-level error responses
         if result.startswith("[Error:") or result.startswith("[Session aborted]"):
             return HandlerResult(
                 status=Outcome.FAIL,

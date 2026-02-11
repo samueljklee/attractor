@@ -1,0 +1,31 @@
+// Research-then-build pipeline: Research a topic, then implement
+// Demonstrates multi-stage knowledge building
+// Usage: attractor run examples/research_then_build.dot
+
+digraph ResearchThenBuild {
+    graph [goal="Build a CLI tool that converts CSV files to JSON"]
+
+    start [shape=ellipse, label="Start"]
+
+    research [
+        shape=box,
+        label="Research",
+        prompt="Research the best approach for: $goal. Consider edge cases, libraries to use, and output format. Keep it to 5 bullet points."
+    ]
+
+    design [
+        shape=box,
+        label="Design",
+        prompt="Based on the research, design the API and CLI interface for: $goal. Specify the command-line arguments, input/output format, and error handling. Be concise."
+    ]
+
+    implement [
+        shape=box,
+        label="Implement",
+        prompt="Implement the complete working code for: $goal. Output only the Python code with proper imports, argument parsing, and error handling."
+    ]
+
+    done [shape=Msquare, label="Done"]
+
+    start -> research -> design -> implement -> done
+}

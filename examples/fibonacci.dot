@@ -1,0 +1,24 @@
+// Simple pipeline: Plan and implement a fibonacci function
+// Usage: attractor run examples/fibonacci.dot
+
+digraph Fibonacci {
+    graph [goal="Write a Python function that calculates fibonacci numbers"]
+
+    start [shape=ellipse, label="Start"]
+
+    plan [
+        shape=box,
+        label="Plan",
+        prompt="Create a brief plan (3 bullet points max) for: $goal. Be concise."
+    ]
+
+    implement [
+        shape=box,
+        label="Implement",
+        prompt="Write the Python code for: $goal. Only output the code, no explanation."
+    ]
+
+    done [shape=Msquare, label="Done"]
+
+    start -> plan -> implement -> done
+}

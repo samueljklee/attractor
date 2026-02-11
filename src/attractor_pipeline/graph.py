@@ -129,12 +129,13 @@ class Graph:
         return self.nodes.get(node_id)
 
     def get_start_node(self) -> Node | None:
-        """Find the start node (shape=ellipse or id containing 'start')."""
+        """Find the start node (shape=ellipse only).
+
+        The validator (R01) enforces that exactly one ellipse node exists.
+        No name-based fallback -- the shape is the single source of truth.
+        """
         for node in self.nodes.values():
             if node.shape == "ellipse":
-                return node
-        for node in self.nodes.values():
-            if "start" in node.id.lower():
                 return node
         return None
 
