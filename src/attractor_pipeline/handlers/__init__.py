@@ -14,6 +14,7 @@ from attractor_pipeline.handlers.basic import (
 )
 from attractor_pipeline.handlers.codergen import CodergenBackend, CodergenHandler
 from attractor_pipeline.handlers.human import HumanHandler, Interviewer
+from attractor_pipeline.handlers.manager import ManagerHandler
 from attractor_pipeline.handlers.parallel import FanInHandler, ParallelHandler
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "Interviewer",
     "ParallelHandler",
     "FanInHandler",
+    "ManagerHandler",
     "register_default_handlers",
 ]
 
@@ -58,3 +60,8 @@ def register_default_handlers(
     parallel.set_handlers(registry)
     registry.register("parallel", parallel)
     registry.register("fan_in", FanInHandler())
+
+    # Manager handler for supervisor pattern (hexagon nodes)
+    manager = ManagerHandler()
+    manager.set_handlers(registry)
+    registry.register("manager", manager)

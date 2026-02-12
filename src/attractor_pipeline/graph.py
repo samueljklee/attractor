@@ -32,7 +32,7 @@ class NodeShape(StrEnum):
         """Map a shape to its default handler type."""
         mapping: dict[str, str] = {
             "box": "codergen",
-            "hexagon": "codergen",
+            "hexagon": "manager",
             "diamond": "conditional",
             "component": "parallel",
             "tripleoctagon": "fan_in",
