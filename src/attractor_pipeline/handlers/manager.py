@@ -216,23 +216,26 @@ class ManagerHandler:
     def _sanitize_dot_value(value: str) -> str:
         """Escape characters that could inject DOT structure.
 
-        Neutralizes: " (closes attribute), ] (closes attr list),
-        ; (statement separator), [ (opens attr list), { } (subgraphs),
-        -> (edges), newlines.
+        Order matters: backslashes MUST be escaped first, otherwise
+        escaping " to \\" produces \\\\" when the input contains \\",
+        which in DOT means literal-backslash + close-quote = injection.
+
+        Neutralizes: \\ (escape char), " (closes attribute),
+        ] (closes attr list), ; (statement separator), [ (opens attr list),
+        { } (subgraphs), -> (edges), newlines.
         """
-        # Replace characters that have structural meaning in DOT
-        replacements = {
-            '"': '\\"',
-            "[": "(",
-            "]": ")",
-            ";": ",",
-            "{": "(",
-            "}": ")",
-            "\n": " ",
-            "\r": " ",
-        }
-        for char, replacement in replacements.items():
-            value = value.replace(char, replacement)
+        # Backslash FIRST (prevents double-escape bypass)
+        value = value.replace("\\", "\\\\")
+        # Then structural characters
+        value = value.replace('"', '\\"')
+        value = value.replace("[", "(")
+        value = value.replace("]", ")")
+        value = value.replace(";", ",")
+        value = value.replace("{", "(")
+        value = value.replace("}", ")")
+        value = value.replace("->", "- >")
+        value = value.replace("\n", " ")
+        value = value.replace("\r", " ")
         return value
 
     def _check_success(self, result: Any, condition: str) -> bool:

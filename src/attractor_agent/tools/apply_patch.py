@@ -255,8 +255,22 @@ def _apply_hunks(original: str, hunks: list[Hunk]) -> str:
     original_lines = original.split("\n")
     result_lines = list(original_lines)
 
+    # Validate hunks don't overlap (prevents silent corruption from
+    # malformed LLM-generated patches). Sort by old_start descending
+    # and verify no overlap between adjacent pairs.
+    sorted_hunks = sorted(hunks, key=lambda h: h.old_start)
+    for i in range(len(sorted_hunks) - 1):
+        curr_end = sorted_hunks[i].old_start + sorted_hunks[i].old_count
+        next_start = sorted_hunks[i + 1].old_start
+        if curr_end > next_start:
+            raise PatchParseError(
+                f"Overlapping hunks: hunk at line {sorted_hunks[i].old_start} "
+                f"(count {sorted_hunks[i].old_count}) overlaps with hunk at "
+                f"line {sorted_hunks[i + 1].old_start}"
+            )
+
     # Apply hunks in reverse order to preserve line numbers
-    for hunk in reversed(hunks):
+    for hunk in reversed(sorted_hunks):
         old_start = hunk.old_start - 1  # 0-indexed
         old_end = old_start + hunk.old_count
 

@@ -82,6 +82,8 @@ class LoggingMiddleware:
 
     def __init__(self, logger_name: str = "attractor_llm") -> None:
         self._logger = logging.getLogger(logger_name)
+        # Per-request timing keyed by id(request) -- concurrency safe
+        self._timings: dict[int, float] = {}
 
     async def before_request(self, request: Request) -> Request:
         self._logger.info(
@@ -91,11 +93,12 @@ class LoggingMiddleware:
             len(request.messages),
             len(request.tools or []),
         )
-        self._start_time = time.monotonic()
+        self._timings[id(request)] = time.monotonic()
         return request
 
     async def after_response(self, request: Request, response: Response) -> Response:
-        duration = time.monotonic() - getattr(self, "_start_time", time.monotonic())
+        start = self._timings.pop(id(request), time.monotonic())
+        duration = time.monotonic() - start
         self._logger.info(
             "LLM response: model=%s finish=%s tokens=%d duration=%.1fs",
             response.model,

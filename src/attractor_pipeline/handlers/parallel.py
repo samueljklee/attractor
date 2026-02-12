@@ -111,23 +111,33 @@ class ParallelHandler:
         # Get max parallelism (0 = unlimited)
         max_parallel = int(node.attrs.get("max_parallel", "0"))
 
+        # Pre-clone contexts BEFORE launching tasks to avoid a race
+        # where concurrent deepcopy calls observe a partially-updated dict.
+        # Each branch gets its own pre-cloned snapshot.
+        branch_snapshots: list[dict[str, Any]] = [copy.deepcopy(context) for _ in outgoing]
+
         # Launch branches
         if max_parallel > 0:
             # Bounded parallelism via semaphore
             sem = asyncio.Semaphore(max_parallel)
 
-            async def bounded_branch(edge_target: str, branch_id: str) -> BranchResult:
+            async def bounded_branch(
+                edge_target: str, branch_id: str, ctx_snapshot: dict[str, Any]
+            ) -> BranchResult:
                 async with sem:
                     return await self._run_branch(
                         edge_target,
                         branch_id,
-                        context,
+                        ctx_snapshot,
                         graph,
                         logs_root,
                         abort_signal,
                     )
 
-            tasks = [bounded_branch(edge.target, f"branch_{i}") for i, edge in enumerate(outgoing)]
+            tasks = [
+                bounded_branch(edge.target, f"branch_{i}", branch_snapshots[i])
+                for i, edge in enumerate(outgoing)
+            ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
         else:
             # Unbounded: all branches run concurrently
@@ -135,7 +145,7 @@ class ParallelHandler:
                 self._run_branch(
                     edge.target,
                     f"branch_{i}",
-                    context,
+                    branch_snapshots[i],
                     graph,
                     logs_root,
                     abort_signal,
