@@ -58,8 +58,12 @@ class OpenAIProfile:
             config.provider = "openai"
         if config.temperature is None:
             config.temperature = 0.2
+        # Only set reasoning_effort for models that support it (o-series).
+        # GPT models don't support reasoning.effort and will error.
         if config.reasoning_effort is None:
-            config.reasoning_effort = "medium"
+            model = config.model or ""
+            if model.startswith(("o1", "o3", "o4")):
+                config.reasoning_effort = "medium"
         return config
 
 

@@ -82,7 +82,7 @@ class AgentLoopBackend:
             model=model,
             provider=provider,
             system_prompt=self._system_prompt or "",
-            max_turns=1,  # Single-turn for pipeline nodes
+            max_turns=10,  # Allow tool-call rounds within a single pipeline node
             max_tool_rounds_per_turn=15,
             reasoning_effort=node.reasoning_effort or None,
         )

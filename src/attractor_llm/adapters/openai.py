@@ -182,10 +182,16 @@ class OpenAIAdapter:
                                 if isinstance(args, dict):
                                     args = json.dumps(args)
                                 resolved_id = part.tool_call_id or str(uuid.uuid4())
+                                # Responses API requires function_call id to start with "fc_"
+                                fc_id = (
+                                    resolved_id
+                                    if resolved_id.startswith("fc_")
+                                    else f"fc_{resolved_id}"
+                                )
                                 items.append(
                                     {
                                         "type": "function_call",
-                                        "id": resolved_id,
+                                        "id": fc_id,
                                         "call_id": resolved_id,
                                         "name": part.name or "",
                                         "arguments": args or "{}",

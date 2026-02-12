@@ -192,6 +192,13 @@ class TestConfigApplication:
         p = OpenAIProfile()
         config = p.apply_to_config(config)
         assert config.temperature == 0.2
+        # reasoning_effort only set for o-series models
+        assert config.reasoning_effort is None  # default model isn't o-series
+
+    def test_openai_sets_reasoning_for_o_series(self):
+        config = SessionConfig(model="o3")
+        p = OpenAIProfile()
+        config = p.apply_to_config(config)
         assert config.reasoning_effort == "medium"
 
     def test_gemini_sets_temperature_zero(self):
@@ -199,7 +206,8 @@ class TestConfigApplication:
         p = GeminiProfile()
         config = p.apply_to_config(config)
         assert config.temperature == 0.0
-        assert config.reasoning_effort == "medium"
+        # reasoning_effort only set for models that support thinkingConfig
+        assert config.reasoning_effort is None  # default model doesn't support it
 
     def test_gemini_tightens_loop_detection(self):
         config = SessionConfig()

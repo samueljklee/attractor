@@ -58,8 +58,12 @@ class GeminiProfile:
             config.provider = "gemini"
         if config.temperature is None:
             config.temperature = 0.0
+        # Only set reasoning_effort for models that support thinkingConfig.
+        # gemini-2.5-flash and older models don't support it.
         if config.reasoning_effort is None:
-            config.reasoning_effort = "medium"
+            model = config.model or ""
+            if "2.5-pro" in model or "2.5-flash-preview" in model:
+                config.reasoning_effort = "medium"
         # Tighter loop detection -- Gemini retries failed edits identically
         if config.loop_detection_threshold is None:
             config.loop_detection_threshold = 2
