@@ -314,6 +314,7 @@ src/
 │   ├── truncation.py            # Two-pass output truncation
 │   ├── subagent.py              # Subagent spawning with depth limiting
 │   ├── prompt_layer.py          # 4-layer system prompt composition
+│   ├── environment.py           # ExecutionEnvironment protocol (Local + Docker)
 │   ├── profiles/                # Provider-specific agent configurations
 │   │   ├── anthropic.py         # Claude Code-style profile
 │   │   ├── openai.py            # codex-rs-style profile
@@ -369,7 +370,7 @@ src/
     └── e2e_test.py                # End-to-end pipeline test
 ```
 
-## Spec Coverage (~99%)
+## Spec Coverage (100%)
 
 ### Unified LLM Client Spec
 
@@ -410,7 +411,7 @@ src/
 | Provider profiles (Claude Code, codex-rs, gemini-cli) | Done | S3.4-3.6 |
 | Subagent spawning with depth limiting | Done | S7 |
 | System prompt layering (4-layer) | Done | S6 |
-| Execution environment abstraction (Docker, K8s) | Not yet | S4 |
+| Execution environment abstraction (Local + Docker) | Done | S4 |
 
 ### Attractor Pipeline Spec
 
@@ -440,7 +441,7 @@ src/
 ## Testing
 
 ```bash
-# Run all unit tests (407 tests, ~2s, no API keys needed)
+# Run all unit tests (432 tests, ~3s, no API keys needed)
 uv run python -m pytest tests/ -q
 
 # Run end-to-end integration tests (8 tests, requires ANTHROPIC_API_KEY)
@@ -454,9 +455,9 @@ ANTHROPIC_API_KEY=sk-... uv run python examples/e2e_test.py
 
 | Test Type | Count | What It Covers |
 |-----------|-------|---------------|
-| Unit tests (mock) | 407 | Types, errors, retry, streaming, tools, parser, conditions, validation, stylesheet, profiles, subagent, apply_patch, generate API, parallel, manager, middleware, prompt layering, variable expansion, preamble, HTTP server (32 endpoint tests), SSE formatting, WebInterviewer |
+| Unit tests (mock) | 432 | Types, errors, retry, streaming, tools, parser, conditions, validation, stylesheet, profiles, subagent, apply_patch, generate API, parallel, manager, middleware, prompt layering, variable expansion, preamble, HTTP server (32 endpoint tests), SSE formatting, WebInterviewer, execution environment (25 tests: Local + Docker) |
 | E2E integration (real API) | 8 | Agent writes/edits real files, pipeline creates code on disk, multi-stage output chaining, generate() with tool loop, structured output, subagent with tools, software factory |
-| Live provider validation | 25 | generate + generate_object + subagent across Anthropic + OpenAI + Gemini; HTTP server endpoints via real curl; SSE event streaming; pipeline cancel mid-run; questions/answer flow; concurrent SSE clients; multi-provider server backends |
+| Live provider validation | 30+ | generate + generate_object + subagent across Anthropic + OpenAI + Gemini; HTTP server endpoints via real curl; SSE event streaming; pipeline cancel mid-run; questions/answer flow; concurrent SSE clients; multi-provider server backends; Docker environment (start, write, read, exec, grep, apply_patch inside real container); pipeline execution inside Docker with real Claude API |
 
 ### What's Proven End-to-End
 
@@ -475,6 +476,10 @@ ANTHROPIC_API_KEY=sk-... uv run python examples/e2e_test.py
 - Human gates: questions appear, answers unblock pipeline, timeout returns default
 - Concurrent SSE: 3 simultaneous clients all receive events
 - All 3 providers (Anthropic, OpenAI, Gemini) tested as server backends
+- Docker environment: start container, write/read/exec/grep/apply_patch all inside real Docker
+- Pipeline execution inside Docker container with real Claude API
+- grep routes through `docker exec grep` when DockerEnvironment is active
+- apply_patch reads/writes via `docker exec` inside container
 
 ## Security
 
@@ -499,7 +504,7 @@ This implementation was built using [Amplifier](https://github.com/microsoft/amp
 - **Implementation phase**: Code reviewed by 2-4 models per feature (Claude Opus 4.6, Sonnet 4.5, GPT O3, Gemini), with cross-reviews where one model verifies another's fixes
 - **Validation phase**: Every feature tested with mock tests AND live API calls against all 3 providers
 - **Security**: Opus 4.6 found a DOT injection-to-execution chain that Sonnet and Gemini both missed; Gemini found a parallel context deepcopy race; O3 found an apply_patch hunk overlap corruption bug
-- **Total**: 35+ swarm review rounds, 44 commits, ~18,000 lines of code
+- **Total**: 35+ swarm review rounds, 48 commits, ~21,000 lines of code
 
 ## Development
 
@@ -527,6 +532,12 @@ uv run python -m attractor_server --port 8080
 
 # Start with specific provider
 uv run python -m attractor_server --port 8080 --provider anthropic --model claude-sonnet-4-5
+
+# Run a pipeline inside Docker (sandboxed)
+uv run python -m attractor_pipeline.cli run examples/fibonacci.dot --docker
+
+# Run with a specific Docker image
+uv run python -m attractor_pipeline.cli run examples/fibonacci.dot --docker --docker-image python:3.12-slim
 ```
 
 ## Credits
