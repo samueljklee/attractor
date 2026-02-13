@@ -455,7 +455,28 @@ async def _grep(
     include: str | None = None,
     max_results: int = 200,
 ) -> str:
-    """Search file contents with regex patterns."""
+    """Search file contents with regex patterns.
+
+    Routes through _environment for Docker compatibility (spec S4.1).
+    Local mode uses fast host-side Python implementation.
+    Non-local mode uses grep/egrep via exec_shell inside the container.
+    """
+    # For non-local environments, delegate to exec_shell with grep
+    if not isinstance(_environment, LocalEnvironment):
+        import shlex
+
+        cmd = f"grep -rn -E {shlex.quote(pattern)} {shlex.quote(path)}"
+        if include:
+            cmd += f" --include={shlex.quote(include)}"
+        cmd += f" | head -{max_results}"
+        result = await _environment.exec_shell(cmd, timeout=30)
+        if result.returncode == 1:
+            return f"No matches for '{pattern}'"
+        if result.returncode != 0:
+            return f"grep error: {result.stderr}"
+        return result.stdout.strip() or f"No matches for '{pattern}'"
+
+    # Local mode: fast host-side implementation
     search_path = Path(path).expanduser().resolve()
 
     if not search_path.exists():
@@ -548,13 +569,29 @@ async def _glob(
     path: str = ".",
     max_results: int = 500,
 ) -> str:
-    """Find files matching a glob pattern."""
+    """Find files matching a glob pattern.
+
+    Routes through _environment for Docker compatibility (spec S4.1).
+    Local mode uses fast host-side Path.glob().
+    Non-local mode delegates to _environment.glob().
+    """
+    # For non-local environments, delegate to _environment.glob()
+    if not isinstance(_environment, LocalEnvironment):
+        results = await _environment.glob(pattern, path)
+        if not results:
+            return f"No files matching '{pattern}' in {path}"
+        output = "\n".join(results[:max_results])
+        if len(results) > max_results:
+            output += f"\n\n[... truncated at {max_results}]"
+        return output
+
+    # Local mode: fast host-side implementation
     search_path = Path(path).expanduser().resolve()
 
     if not search_path.exists():
         raise FileNotFoundError(f"Path not found: {path}")
 
-    results: list[str] = []
+    results_local: list[str] = []
 
     for match in sorted(search_path.glob(pattern)):
         if _SKIP_DIRS & set(match.parts):
@@ -562,16 +599,16 @@ async def _glob(
 
         rel = match.relative_to(search_path)
         suffix = "/" if match.is_dir() else ""
-        results.append(f"{rel}{suffix}")
+        results_local.append(f"{rel}{suffix}")
 
-        if len(results) >= max_results:
-            results.append(f"\n[... truncated at {max_results}]")
+        if len(results_local) >= max_results:
+            results_local.append(f"\n[... truncated at {max_results}]")
             break
 
-    if not results:
+    if not results_local:
         return f"No files matching '{pattern}' in {path}"
 
-    return "\n".join(results)
+    return "\n".join(results_local)
 
 
 GLOB = _make_tool(

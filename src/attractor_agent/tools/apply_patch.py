@@ -174,7 +174,7 @@ def parse_patch(patch_text: str) -> PatchSet:
 # ------------------------------------------------------------------ #
 
 
-def apply_patch_to_file(
+async def apply_patch_to_file(
     file_path: Path,
     patch: FilePatch,
 ) -> str:
@@ -191,41 +191,51 @@ def apply_patch_to_file(
     target = file_path / patch.target_path
     resolved = target.resolve()
 
-    # Security: path confinement
-    path_error = _check_path_allowed(resolved)
-    if path_error:
-        raise PermissionError(path_error)
+    # Route through execution environment for Docker compatibility (spec S4.1)
+    from attractor_agent.environment import LocalEnvironment
+    from attractor_agent.tools.core import get_environment
 
-    # Security: reject symlink traversal -- resolved path must be under file_path
-    base_resolved = file_path.resolve()
-    try:
-        resolved.relative_to(base_resolved)
-    except ValueError:
-        raise PermissionError(
-            f"Path traversal detected: {patch.target_path} resolves outside base directory"
-        ) from None
+    env = get_environment()
+
+    # Security: path confinement for local mode only.
+    # Docker mode trusts the container as the sandbox (spec S4).
+    if isinstance(env, LocalEnvironment):
+        path_error = _check_path_allowed(resolved)
+        if path_error:
+            raise PermissionError(path_error)
+        # Reject symlink traversal
+        base_resolved = file_path.resolve()
+        try:
+            resolved.relative_to(base_resolved)
+        except ValueError:
+            raise PermissionError(
+                f"Path traversal detected: {patch.target_path} resolves outside base directory"
+            ) from None
+
+    path_str = str(resolved)
 
     if patch.is_creation:
-        # Create new file
-        resolved.parent.mkdir(parents=True, exist_ok=True)
         content = _build_new_content(patch)
-        resolved.write_text(content, encoding="utf-8")
+        await env.write_file(path_str, content)
         return f"Created {patch.target_path}"
 
     if patch.is_deletion:
-        # Delete file
-        if resolved.exists():
-            resolved.unlink()
+        if await env.file_exists(path_str):
+            # For local, use unlink; for Docker, use exec_shell rm
+            if isinstance(env, LocalEnvironment):
+                resolved.unlink()
+            else:
+                await env.exec_shell(f"rm -f {path_str}")
             return f"Deleted {patch.target_path}"
         return f"Already deleted: {patch.target_path}"
 
     # Modify existing file
-    if not resolved.exists():
+    if not await env.file_exists(path_str):
         raise FileNotFoundError(f"Cannot patch: {patch.target_path} does not exist")
 
-    original = resolved.read_text(encoding="utf-8")
+    original = await env.read_file(path_str)
     patched = _apply_hunks(original, patch.hunks)
-    resolved.write_text(patched, encoding="utf-8")
+    await env.write_file(path_str, patched)
     return f"Patched {patch.target_path} ({len(patch.hunks)} hunk(s))"
 
 
@@ -351,7 +361,7 @@ async def _apply_patch_execute(
 
     results: list[str] = []
     for file_patch in patch_set.patches:
-        result = apply_patch_to_file(cwd, file_patch)
+        result = await apply_patch_to_file(cwd, file_patch)
         results.append(result)
 
     return "\n".join(results)

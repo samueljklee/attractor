@@ -155,7 +155,8 @@ class TestPatchApplicator:
         yield
         set_allowed_roots([os.getcwd()])
 
-    def test_apply_simple_modification(self):
+    @pytest.mark.asyncio
+    async def test_apply_simple_modification(self):
         target = self.sandbox / "hello.py"
         target.write_text("line 1\nold line 2\nline 3\n")
 
@@ -172,12 +173,13 @@ class TestPatchApplicator:
                 )
             ],
         )
-        result = apply_patch_to_file(self.sandbox, patch)
+        result = await apply_patch_to_file(self.sandbox, patch)
         assert "Patched" in result
         assert "new line 2" in target.read_text()
         assert "old line 2" not in target.read_text()
 
-    def test_apply_file_creation(self):
+    @pytest.mark.asyncio
+    async def test_apply_file_creation(self):
         patch = FilePatch(
             old_path="/dev/null",
             new_path="b/new_file.py",
@@ -191,13 +193,14 @@ class TestPatchApplicator:
                 )
             ],
         )
-        result = apply_patch_to_file(self.sandbox, patch)
+        result = await apply_patch_to_file(self.sandbox, patch)
         assert "Created" in result
         assert (self.sandbox / "new_file.py").exists()
         content = (self.sandbox / "new_file.py").read_text()
         assert "hello" in content
 
-    def test_apply_file_deletion(self):
+    @pytest.mark.asyncio
+    async def test_apply_file_deletion(self):
         target = self.sandbox / "delete_me.py"
         target.write_text("content")
 
@@ -206,29 +209,32 @@ class TestPatchApplicator:
             new_path="/dev/null",
             hunks=[],
         )
-        result = apply_patch_to_file(self.sandbox, patch)
+        result = await apply_patch_to_file(self.sandbox, patch)
         assert "Deleted" in result
         assert not target.exists()
 
-    def test_nonexistent_file_raises(self):
+    @pytest.mark.asyncio
+    async def test_nonexistent_file_raises(self):
         patch = FilePatch(
             old_path="a/missing.py",
             new_path="b/missing.py",
             hunks=[Hunk(old_start=1, old_count=1, new_start=1, new_count=1, lines=["-x", "+y"])],
         )
         with pytest.raises(FileNotFoundError):
-            apply_patch_to_file(self.sandbox, patch)
+            await apply_patch_to_file(self.sandbox, patch)
 
-    def test_path_confinement(self):
+    @pytest.mark.asyncio
+    async def test_path_confinement(self):
         patch = FilePatch(
             old_path="/dev/null",
             new_path="b/../../../etc/evil.py",
             hunks=[Hunk(old_start=0, old_count=0, new_start=1, new_count=1, lines=["+evil"])],
         )
         with pytest.raises(PermissionError):
-            apply_patch_to_file(self.sandbox, patch)
+            await apply_patch_to_file(self.sandbox, patch)
 
-    def test_nested_directory_creation(self):
+    @pytest.mark.asyncio
+    async def test_nested_directory_creation(self):
         patch = FilePatch(
             old_path="/dev/null",
             new_path="b/deep/nested/dir/file.py",
@@ -242,7 +248,7 @@ class TestPatchApplicator:
                 )
             ],
         )
-        apply_patch_to_file(self.sandbox, patch)
+        await apply_patch_to_file(self.sandbox, patch)
         assert (self.sandbox / "deep" / "nested" / "dir" / "file.py").exists()
 
 

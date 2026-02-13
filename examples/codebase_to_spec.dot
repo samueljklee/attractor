@@ -1,0 +1,138 @@
+// Codebase-to-Spec Pipeline
+//
+// Point this at ANY project and it will:
+//   1. Deep-dive the entire codebase
+//   2. Build an internal connection graph of all components
+//   3. Generate natural language specifications in attractor NL-spec format
+//
+// Multi-model by design: each phase is routed to a different provider
+// via the model stylesheet, so you get diverse analytical perspectives
+// across Claude, GPT, and Gemini.
+//
+// Usage:
+//   cd any-project/
+//   attractor run path/to/codebase_to_spec.dot
+//
+// Requires API keys for all three providers:
+//   ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
+//
+// To run with a single provider, remove the model_stylesheet block
+// and it will use the default model for all nodes.
+
+digraph codebase_to_spec {
+
+    graph [
+        goal="Deeply analyze this entire codebase, map every component and connection, and produce natural language specifications that a developer could use to rewrite the system from scratch"
+        model_stylesheet="
+            * { llm_model: claude-sonnet-4-5; llm_provider: anthropic; }
+            .deep    { reasoning_effort: high; }
+            .openai  { llm_model: gpt-4.1; llm_provider: openai; }
+            .gemini  { llm_model: gemini-2.5-pro; llm_provider: google; }
+        "
+    ]
+
+    // ── Entry ──────────────────────────────────────────────────
+
+    start [shape=ellipse label="Start"]
+
+    // ── Phase 1: Discover ──────────────────────────────────────
+    //
+    // Fast broad scan. Identify what we're dealing with before
+    // the deep analysis phases.
+
+    discover [shape=box label="Discover Project"
+        prompt="Perform a complete survey of this project. You need to build a map that the analysis phases will use.\n\n1. STRUCTURE\n   - List every top-level directory and its purpose\n   - Count files by type (source, config, test, docs, assets)\n   - Identify the primary language(s) and frameworks\n\n2. BUILD SYSTEM\n   - Read package manifests (package.json, pyproject.toml, Cargo.toml, go.mod, pom.xml, etc.)\n   - List all dependencies (direct and dev)\n   - Identify build commands, scripts, entry points\n\n3. ENTRY POINTS\n   - CLI commands, main functions, server endpoints\n   - Where does execution start?\n   - What are the public-facing interfaces?\n\n4. TEST INFRASTRUCTURE\n   - Test framework and configuration\n   - Test file locations and naming conventions\n   - Approximate test count\n\n5. EXISTING DOCUMENTATION\n   - README content summary\n   - Any existing specs, architecture docs, or ADRs\n   - Inline documentation quality (docstrings, comments)\n\n6. KEY FILES\n   - List the 10-15 most important source files (by centrality, not size)\n   - For each, one sentence on what it does\n\nOutput a structured project map that downstream analysis can reference."
+    ]
+
+    // ── Phase 2: Analyze Architecture ──────────────────────────
+    //
+    // Deep structural analysis with Claude (high reasoning).
+    // Reads core source files, identifies layers, patterns, boundaries.
+
+    analyze_arch [shape=box class="deep" label="Analyze Architecture"
+        prompt="Using the project map:\n$codergen.discover.output\n\nPerform a deep architectural analysis of the codebase.\n\nRead the source files identified as most important, plus any files they import or depend on. Build a complete understanding of:\n\n1. LAYERS AND BOUNDARIES\n   - What are the major architectural layers? (e.g., presentation, business logic, data access)\n   - Where are the boundaries between them?\n   - What crosses those boundaries? (data types, function calls, events)\n   - Are boundaries clean or leaky?\n\n2. MODULE STRUCTURE\n   - For each module/package: its responsibility (single sentence), its public API, what it depends on, what depends on it\n   - Identify the module dependency graph (which imports which)\n\n3. DESIGN PATTERNS\n   - What patterns are used? (factory, observer, strategy, middleware, etc.)\n   - Where are they applied and why?\n   - Are there custom patterns specific to this project?\n\n4. DATA MODELS\n   - What are the core data types/entities?\n   - Their fields, types, and validation rules\n   - How do they flow through the system?\n\n5. CONFIGURATION AND COMPOSITION\n   - How are components wired together?\n   - Dependency injection, service locators, direct construction?\n   - Runtime vs compile-time configuration\n\nFor each finding, cite the specific file and line range. Be precise -- this analysis must be accurate enough to reconstruct the architecture."
+    ]
+
+    // ── Phase 3: Analyze Behavior ──────────────────────────────
+    //
+    // Behavioral analysis with OpenAI. Traces what the code DOES:
+    // data flows, API contracts, state transitions, side effects.
+
+    analyze_behavior [shape=box class="openai" label="Analyze Behavior"
+        prompt="Building on the project map and architecture analysis:\n$codergen.discover.output\n$codergen.analyze_arch.output\n\nAnalyze the runtime BEHAVIOR of this codebase. Read the implementation files and trace:\n\n1. DATA FLOWS\n   - For each major feature: trace input -> processing -> output\n   - What transformations happen to data at each step?\n   - Where is data validated, enriched, filtered?\n\n2. API CONTRACTS\n   - Every public API (HTTP endpoints, CLI commands, library functions)\n   - For each: method/route, input schema, output schema, error responses\n   - Authentication and authorization requirements\n\n3. STATE MANAGEMENT\n   - What state is maintained? (in-memory, database, filesystem, cache)\n   - State lifecycle: creation, mutation, expiration\n   - Concurrency handling (locks, queues, transactions)\n\n4. SIDE EFFECTS\n   - All I/O operations: disk writes, network calls, database queries\n   - Which functions are pure vs impure?\n   - External system interactions\n\n5. ERROR HANDLING\n   - Error classification (retryable vs fatal, user vs system)\n   - Recovery strategies (retry, fallback, circuit breaker)\n   - Error propagation paths\n\n6. EVENT SYSTEM (if present)\n   - What events are emitted and where?\n   - Who subscribes and what do they do?\n   - Event ordering guarantees\n\nFor each behavior, cite the specific code paths. This analysis must capture what the system DOES, not just how it's structured."
+    ]
+
+    // ── Phase 4: Analyze Integration ───────────────────────────
+    //
+    // External boundary analysis with Gemini. Everything outside
+    // the codebase: dependencies, system requirements, deployment.
+
+    analyze_integration [shape=box class="gemini" label="Analyze Integration"
+        prompt="Building on all previous analyses:\n$codergen.discover.output\n$codergen.analyze_arch.output\n$codergen.analyze_behavior.output\n\nAnalyze everything at the BOUNDARIES of this codebase.\n\n1. EXTERNAL DEPENDENCIES\n   - For each dependency: what it provides, how it's used, version constraints\n   - Which dependencies are critical vs optional?\n   - Are there vendored or forked dependencies?\n\n2. SYSTEM REQUIREMENTS\n   - Runtime environment (OS, language version, system libraries)\n   - Required services (databases, message queues, caches)\n   - Environment variables and their purposes\n\n3. INTEGRATION POINTS\n   - External APIs consumed (URLs, auth methods, data formats)\n   - Protocols used (HTTP, gRPC, WebSocket, IPC)\n   - Rate limiting, timeout, and retry behavior\n\n4. DEPLOYMENT AND OPERATIONS\n   - How is this built and packaged?\n   - Container, serverless, or bare metal?\n   - Configuration management approach\n\n5. SECURITY BOUNDARIES\n   - Authentication mechanisms\n   - Authorization model\n   - Secrets management\n   - Input validation and sanitization\n\n6. EXTENSION POINTS\n   - Where is the system designed to be extended?\n   - Plugin systems, hook points, middleware chains\n   - What's easy to change vs what requires deep surgery?\n\nThis analysis completes the picture: architecture (structure) + behavior (runtime) + integration (boundaries)."
+    ]
+
+    // ── Phase 5: Build Connection Graph ────────────────────────
+    //
+    // Synthesis step. Merges all three analyses into one unified
+    // graph that maps every component and connection.
+
+    build_graph [shape=box class="deep" label="Build Connection Graph"
+        prompt="You now have three comprehensive analyses of this codebase:\n\nArchitecture (structure):\n$codergen.analyze_arch.output\n\nBehavior (runtime):\n$codergen.analyze_behavior.output\n\nIntegration (boundaries):\n$codergen.analyze_integration.output\n\nSynthesize these into a single UNIFIED CONNECTION GRAPH.\n\n1. COMPONENT INVENTORY\n   List every component (module, service, subsystem) with:\n   - Name and one-line purpose\n   - Category (core, utility, adapter, interface)\n   - Complexity estimate (simple, moderate, complex)\n\n2. CONNECTION MAP\n   For every pair of connected components:\n   - Source -> Target\n   - Relationship type: calls, imports, extends, implements, subscribes, produces, consumes\n   - Data exchanged (types, formats)\n   - Coupling strength: tight (shares internals), normal (public API), loose (events/messages)\n\n3. LAYER DIAGRAM\n   Show the vertical layering:\n   - Which components sit at which layer\n   - What crosses layer boundaries\n   - Direction of dependencies (should flow downward)\n\n4. DATA FLOW DIAGRAM\n   Show the horizontal flows:\n   - Input sources -> processing chains -> output sinks\n   - Branch points and merge points\n   - Where state is read/written\n\n5. NATURAL SPEC BOUNDARIES\n   Based on the graph, identify where to SPLIT the specifications:\n   - Each spec document should cover one cohesive subsystem\n   - Boundaries should align with module/layer boundaries\n   - Aim for 2-5 spec documents (like attractor has 3: pipeline, agent, llm-client)\n   - For each proposed spec: name, scope, which components it covers, estimated sections\n\nThis graph is the blueprint for the spec documents that follow."
+    ]
+
+    // ── Phase 6: Write Specifications ──────────────────────────
+    //
+    // The main deliverable. Generates NL spec files following the
+    // attractor spec format: numbered sections, pseudocode,
+    // definition of done, appendices.
+
+    write_specs [shape=box class="deep" label="Write Specifications"
+        system_prompt="You are a technical specification writer. You produce precise, implementation-ready natural language specifications. Your specs must be detailed enough that a developer with no access to the original code could reimplement the system from scratch."
+        prompt="Using the connection graph and all previous analyses:\n$codergen.build_graph.output\n\nGenerate complete natural language specifications. Follow this EXACT format (from the attractor NL-spec standard):\n\nDOCUMENT STRUCTURE:\n- H1 title: '# <System Name> Specification'\n- Summary paragraph: what this spec covers and its relationship to other specs\n- '---' horizontal rule\n- Table of Contents: numbered markdown list with anchor links\n- '---'\n- Numbered sections (## 1. Title, ### 1.1 Subtitle)\n- Definition of Done as the last numbered section\n- Appendices (## Appendix A, B, etc.) for reference tables\n\nSECTION CONTENT:\n- Start each section with a concept paragraph explaining WHAT and WHY\n- Define data models as language-neutral pseudocode using RECORD, INTERFACE, ENUM, FUNCTION\n- Use '--' for pseudocode comments, List<T> and Map<K,V> for generics\n- Include configuration tables: Key | Type | Default | Description\n- State requirements as declarative facts: 'The engine selects the next edge...'\n- Use bold **MUST** / **MUST NOT** only for hard constraints\n- Use lowercase 'should' for recommendations\n- Cross-reference other sections: '(see Section N.M)' or '(Section N.M)'\n- Cross-reference other spec documents with markdown links on first mention\n\nDEFINITION OF DONE:\n- Feature-area subsections with '- [ ]' checkbox items\n- Cross-feature parity matrix table\n- Integration smoke test in pseudocode with ASSERT statements\n\nSPEC BOUNDARIES:\nCreate one spec file per boundary identified in the connection graph:\n$codergen.build_graph.output\n\nFor EACH spec file:\n1. Write the complete spec to disk as <name>-spec.md\n2. Sections must map to implementation modules (one section per major module)\n3. Every public API, data type, algorithm, and behavior must be specified\n4. Include enough detail that someone could rewrite the code from this spec alone\n\nAfter writing all spec files, output a summary listing each file and its section count."
+    ]
+
+    // ── Phase 7: Cross-Review ──────────────────────────────────
+    //
+    // Independent verification with a DIFFERENT model. Reads both
+    // the actual code and the generated specs, checks for accuracy.
+
+    cross_review [shape=box class="openai" label="Cross-Review Specs"
+        prompt="You are reviewing specifications that were generated from a codebase. Your job is to verify ACCURACY and COMPLETENESS by checking the specs against the actual code.\n\nGenerated specs summary:\n$codergen.write_specs.output\n\nOriginal project map:\n$codergen.discover.output\n\nConnection graph:\n$codergen.build_graph.output\n\nRead the generated spec files AND the actual source code. For each spec document:\n\n1. ACCURACY CHECK\n   - Does every stated requirement match what the code actually does?\n   - Are data models correct (field names, types, relationships)?\n   - Are algorithms described accurately?\n   - Are API contracts (inputs, outputs, errors) precise?\n\n2. COMPLETENESS CHECK\n   - Are there source modules with no corresponding spec section?\n   - Are there public APIs not documented in any spec?\n   - Are error handling paths covered?\n   - Are edge cases and boundary conditions specified?\n\n3. CONSISTENCY CHECK\n   - Do cross-references between spec documents resolve correctly?\n   - Are shared terms defined consistently across specs?\n   - Do interface boundaries match between specs?\n\n4. QUALITY CHECK\n   - Is the spec detailed enough to reimplement from scratch?\n   - Are pseudocode examples syntactically consistent?\n   - Does the Definition of Done cover all major features?\n\nFor each issue found, fix it directly in the spec file.\n\nOutput a review summary:\n- Total issues found and fixed\n- Remaining concerns (if any)\n- Confidence assessment: how well do these specs capture the codebase?"
+    ]
+
+    // ── Phase 8: Finalize ──────────────────────────────────────
+    //
+    // Final pass with a third model. Ensures specs are polished,
+    // internally consistent, and ready to use.
+
+    finalize [shape=box class="gemini" label="Finalize Specs"
+        prompt="The specifications have been written and reviewed. Perform a final polish pass.\n\nReview summary from previous step:\n$codergen.cross_review.output\n\nRead every spec file that was generated. For each one:\n\n1. Verify the Table of Contents matches the actual sections\n2. Ensure all cross-references resolve (Section N.M references, links between specs)\n3. Check that the Definition of Done checkboxes cover every major feature in the spec\n4. Verify pseudocode uses consistent syntax throughout (RECORD, FUNCTION, INTERFACE, ENUM)\n5. Ensure configuration tables are complete (Key, Type, Default, Description)\n6. Add an Appendix with a consolidated attribute/config reference if one doesn't exist\n\nFix any issues found directly in the spec files.\n\nFinally, create a README-like index file called SPECS.md that:\n- Lists every spec document with a one-line description\n- Shows the relationship between specs (which layers on which)\n- Provides a reading order for someone new to the project\n- Notes the original codebase these specs were derived from"
+    ]
+
+    // ── Exit ───────────────────────────────────────────────────
+
+    done [shape=Msquare label="Specs Complete"
+        goal_gate="Complete NL specifications have been written to disk, cross-reviewed for accuracy, and finalized with consistent formatting"
+        retry_target="write_specs"
+    ]
+
+    // ── Flow ───────────────────────────────────────────────────
+    //
+    //  Claude          Claude(deep)      OpenAI           Gemini
+    //  discover -----> analyze_arch ---> analyze_behavior ---> analyze_integration
+    //                                                              |
+    //  Claude(deep)    Claude(deep)      OpenAI           Gemini   |
+    //  build_graph <--  |   write_specs ---> cross_review ---> finalize
+    //                                                              |
+    //                                                            done
+
+    start -> discover
+    discover -> analyze_arch
+    analyze_arch -> analyze_behavior
+    analyze_behavior -> analyze_integration
+    analyze_integration -> build_graph
+    build_graph -> write_specs
+    write_specs -> cross_review
+    cross_review -> finalize
+    finalize -> done
+}
