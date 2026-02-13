@@ -241,6 +241,14 @@ class PipelineManager:
                 },
             )
 
+            # Wire a per-run WebInterviewer so human gates push
+            # questions to this run's pending_questions dict
+            from attractor_pipeline.handlers.human import HumanHandler
+            from attractor_server.interviewer import WebInterviewer
+
+            web_interviewer = WebInterviewer(run)
+            self._handlers.register("wait.human", HumanHandler(interviewer=web_interviewer))
+
             try:
                 result = await run_pipeline(
                     run.graph,

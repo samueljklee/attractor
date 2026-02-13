@@ -46,6 +46,7 @@ class WebInterviewer:
         self,
         question: str,
         options: list[str] | None = None,
+        node_id: str = "",
         *,
         timeout: float | None = None,
         default: str | None = None,
