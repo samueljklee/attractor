@@ -145,7 +145,9 @@ class AnthropicAdapter:
             body["_beta_headers"] = beta_headers
 
         # Apply cache_control for prompt caching (§2.10)
-        self._inject_cache_control(body)
+        # Can be disabled via provider_options.anthropic.auto_cache = false (Spec §8.6.6)
+        if anthropic_opts.get("auto_cache", True):
+            self._inject_cache_control(body)
 
         return body
 
@@ -155,7 +157,7 @@ class AnthropicAdapter:
         conversation: list[Message] = []
 
         for msg in messages:
-            if msg.role == Role.SYSTEM:
+            if msg.role in (Role.SYSTEM, Role.DEVELOPER):
                 for part in msg.content:
                     if part.kind == ContentPartKind.TEXT and part.text:
                         system_parts.append({"type": "text", "text": part.text})
@@ -295,6 +297,12 @@ class AnthropicAdapter:
             if msg["role"] == "user" and msg["content"]:
                 msg["content"][-1]["cache_control"] = {"type": "ephemeral"}
                 break
+
+        # Auto-add prompt-caching beta header (Spec §2.10)
+        beta_headers: list[str] = body.get("_beta_headers", [])
+        if "prompt-caching-2024-07-31" not in beta_headers:
+            beta_headers.append("prompt-caching-2024-07-31")
+        body["_beta_headers"] = beta_headers
 
     def _thinking_budget(self, effort: str | None) -> int:
         """Map reasoning_effort to Anthropic thinking budget tokens."""

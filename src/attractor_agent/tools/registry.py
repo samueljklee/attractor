@@ -8,6 +8,7 @@ Spec reference: coding-agent-loop §3.8.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from attractor_agent.events import EventEmitter, EventKind, SessionEvent
@@ -142,11 +143,12 @@ class ToolRegistry:
         )
 
     async def execute_tool_calls(self, tool_calls: list[ContentPart]) -> list[ContentPart]:
-        """Execute multiple tool calls and return results.
+        """Execute multiple tool calls concurrently. Spec §5.7.
 
-        Tool calls are executed sequentially (not in parallel) to avoid
-        filesystem race conditions. Parallel execution can be added later
-        for tools that are known to be safe for concurrency.
+        Tool calls are executed in parallel via asyncio.gather().
+        Results are returned in the same order as the input tool calls.
+        Partial failures are handled: successful tools return normally,
+        failed tools return is_error=True results.
 
         Args:
             tool_calls: List of ContentParts with kind=TOOL_CALL.
@@ -154,8 +156,29 @@ class ToolRegistry:
         Returns:
             List of ContentParts with kind=TOOL_RESULT, in the same order.
         """
-        results: list[ContentPart] = []
-        for tc in tool_calls:
-            result = await self.execute_tool_call(tc)
-            results.append(result)
-        return results
+        if len(tool_calls) <= 1:
+            # Single tool call: no gather overhead needed
+            return [await self.execute_tool_call(tc) for tc in tool_calls]
+
+        # Multiple tool calls: execute concurrently
+        results = await asyncio.gather(
+            *(self.execute_tool_call(tc) for tc in tool_calls),
+            return_exceptions=True,
+        )
+
+        # Convert any unexpected exceptions to error results
+        final: list[ContentPart] = []
+        for i, result in enumerate(results):
+            if isinstance(result, BaseException):
+                tc = tool_calls[i]
+                final.append(
+                    ContentPart.tool_result_part(
+                        tool_call_id=tc.tool_call_id or "",
+                        name=tc.name or "",
+                        output=f"Error: {type(result).__name__}: {result}",
+                        is_error=True,
+                    )
+                )
+            else:
+                final.append(result)
+        return final

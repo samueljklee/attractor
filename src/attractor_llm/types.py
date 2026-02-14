@@ -7,6 +7,7 @@ All types use Pydantic v2 for validation and serialization.
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Self
 
@@ -17,6 +18,7 @@ class Role(StrEnum):
     """Message roles. Spec §3.1."""
 
     SYSTEM = "system"
+    DEVELOPER = "developer"
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
@@ -164,6 +166,10 @@ class Message(BaseModel):
     @classmethod
     def system(cls, text: str) -> Message:
         return cls(role=Role.SYSTEM, content=[ContentPart.text_part(text)])
+
+    @classmethod
+    def developer(cls, text: str) -> Message:
+        return cls(role=Role.DEVELOPER, content=[ContentPart.text_part(text)])
 
     @classmethod
     def tool_result(
@@ -356,3 +362,52 @@ class StreamEvent(BaseModel):
 
     # ERROR
     error: str | None = None
+
+
+# ------------------------------------------------------------------ #
+# Generate result types (Spec §4.3)
+# ------------------------------------------------------------------ #
+
+
+@dataclass
+class StepResult:
+    """Result of a single LLM call step within generate(). Spec §4.3.
+
+    Each step represents one round-trip to the LLM, potentially
+    followed by tool executions.
+    """
+
+    response: Response
+    tool_results: list[ContentPart] = field(default_factory=list)
+
+
+@dataclass
+class GenerateResult:
+    """Result of generate() with step tracking. Spec §4.3.
+
+    Backward-compatible: str(result) returns the text, and
+    result == "some string" compares against the text.
+    """
+
+    text: str = ""
+    steps: list[StepResult] = field(default_factory=list)
+    total_usage: Usage = field(default_factory=Usage)
+
+    def __str__(self) -> str:
+        return self.text
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.text == other
+        if isinstance(other, GenerateResult):
+            return self.text == other.text
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.text)
+
+    def __contains__(self, item: str) -> bool:
+        return item in self.text
+
+    def __bool__(self) -> bool:
+        return bool(self.text)

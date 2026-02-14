@@ -12,7 +12,7 @@ from typing import Any
 
 from attractor_llm.adapters.base import ProviderAdapter
 from attractor_llm.catalog import get_model_info
-from attractor_llm.errors import InvalidRequestError, SDKError
+from attractor_llm.errors import ConfigurationError, InvalidRequestError, SDKError
 from attractor_llm.retry import RetryPolicy, retry_with_policy
 from attractor_llm.types import (
     Request,
@@ -58,6 +58,48 @@ class Client:
         """
         self._adapters[provider] = adapter
 
+    @classmethod
+    async def from_env(cls, **kwargs: Any) -> Client:
+        """Create a Client with providers auto-detected from environment variables.
+
+        Checks for standard API key env vars and registers the corresponding
+        adapter for each one found. First registered adapter is the default.
+
+        Supported env vars (Spec §2.2):
+        - OPENAI_API_KEY → OpenAI adapter
+        - ANTHROPIC_API_KEY → Anthropic adapter
+        - GEMINI_API_KEY or GOOGLE_API_KEY → Gemini adapter
+
+        Args:
+            **kwargs: Passed to Client.__init__ (e.g., retry_policy).
+
+        Returns:
+            A configured Client instance.
+        """
+        import os
+
+        from attractor_llm.adapters.base import ProviderConfig
+
+        client = cls(**kwargs)
+
+        if api_key := os.environ.get("OPENAI_API_KEY"):
+            from attractor_llm.adapters.openai import OpenAIAdapter
+
+            client.register_adapter("openai", OpenAIAdapter(ProviderConfig(api_key=api_key)))
+
+        if api_key := os.environ.get("ANTHROPIC_API_KEY"):
+            from attractor_llm.adapters.anthropic import AnthropicAdapter
+
+            client.register_adapter("anthropic", AnthropicAdapter(ProviderConfig(api_key=api_key)))
+
+        gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if gemini_key:
+            from attractor_llm.adapters.gemini import GeminiAdapter
+
+            client.register_adapter("gemini", GeminiAdapter(ProviderConfig(api_key=gemini_key)))
+
+        return client
+
     def _resolve_adapter(self, request: Request) -> ProviderAdapter:
         """Resolve which adapter to use for a request.
 
@@ -74,7 +116,7 @@ class Client:
             adapter = self._adapters.get(request.provider)
             if adapter:
                 return adapter
-            raise InvalidRequestError(
+            raise ConfigurationError(
                 f"Provider {request.provider!r} not registered. "
                 f"Available: {list(self._adapters.keys())}"
             )
@@ -100,7 +142,7 @@ class Client:
                 if model_lower.startswith("gemini") and provider_name == "gemini":
                     return adapter
 
-        raise InvalidRequestError(
+        raise ConfigurationError(
             f"Cannot resolve provider for model {request.model!r}. "
             f"Set request.provider explicitly or register the provider. "
             f"Available: {list(self._adapters.keys())}"
@@ -144,3 +186,30 @@ class Client:
 
     async def __aexit__(self, *args: object) -> None:
         await self.close()
+
+
+# ------------------------------------------------------------------ #
+# Module-level default client (Spec §2.2)
+# ------------------------------------------------------------------ #
+
+_default_client: Client | None = None
+
+
+def set_default_client(client: Client) -> None:
+    """Set the module-level default client. Spec §2.2."""
+    global _default_client
+    _default_client = client
+
+
+def get_default_client() -> Client:
+    """Get the module-level default client. Spec §2.2.
+
+    Raises:
+        InvalidRequestError: If no default client has been set.
+    """
+    if _default_client is None:
+        raise InvalidRequestError(
+            "No default client configured. "
+            "Call set_default_client() or await Client.from_env() first."
+        )
+    return _default_client

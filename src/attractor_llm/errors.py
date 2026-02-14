@@ -131,6 +131,19 @@ class InvalidRequestError(SDKError):
         super().__init__(message, provider=provider, status_code=status_code, retryable=False)
 
 
+class ConfigurationError(SDKError):
+    """SDK misconfiguration. Not retryable. Spec §6.
+
+    Raised when the SDK is not properly configured (e.g., no providers
+    registered, missing API keys).
+    """
+
+    def __init__(
+        self, message: str, *, provider: str | None = None, status_code: int | None = None
+    ) -> None:
+        super().__init__(message, provider=provider, status_code=status_code, retryable=False)
+
+
 class RequestTimeoutError(SDKError):
     """Request timed out. Retryable."""
 

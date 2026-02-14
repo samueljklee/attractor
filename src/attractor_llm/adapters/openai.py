@@ -154,6 +154,15 @@ class OpenAIAdapter:
                         }
                     )
 
+                case Role.DEVELOPER:
+                    text = msg.text or ""
+                    items.append(
+                        {
+                            "role": "developer",
+                            "content": text,
+                        }
+                    )
+
                 case Role.USER:
                     content = self._translate_user_content(msg)
                     items.append(

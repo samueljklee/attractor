@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from attractor_llm.adapters.base import ProviderAdapter, ProviderConfig
 from attractor_llm.catalog import ModelInfo, get_default_model, get_model_info, list_models
-from attractor_llm.client import Client
+from attractor_llm.client import Client, get_default_client, set_default_client
 from attractor_llm.errors import (
     AuthenticationError,
+    ConfigurationError,
     ContentFilterError,
     InvalidRequestError,
     ProviderError,
@@ -27,11 +28,13 @@ from attractor_llm.types import (
     ContentPart,
     ContentPartKind,
     FinishReason,
+    GenerateResult,
     ImageData,
     Message,
     Request,
     Response,
     Role,
+    StepResult,
     StreamEvent,
     StreamEventKind,
     Tool,
@@ -41,6 +44,8 @@ from attractor_llm.types import (
 __all__ = [
     # Client
     "Client",
+    "get_default_client",
+    "set_default_client",
     "ProviderAdapter",
     "ProviderConfig",
     # Types
@@ -54,6 +59,8 @@ __all__ = [
     "Usage",
     "Request",
     "Response",
+    "StepResult",
+    "GenerateResult",
     "StreamEventKind",
     "StreamEvent",
     # Errors
@@ -63,6 +70,7 @@ __all__ = [
     "RateLimitError",
     "ServerError",
     "ContentFilterError",
+    "ConfigurationError",
     "InvalidRequestError",
     "RequestTimeoutError",
     "ToolError",
