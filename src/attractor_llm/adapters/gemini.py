@@ -159,7 +159,7 @@ class GeminiAdapter:
         conversation: list[Message] = []
 
         for msg in messages:
-            if msg.role == Role.SYSTEM:
+            if msg.role in (Role.SYSTEM, Role.DEVELOPER):
                 if msg.text:
                     system_parts.append(msg.text)
             else:

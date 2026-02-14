@@ -18,16 +18,34 @@ Spec reference: attractor-spec §3.1-3.8.
 from __future__ import annotations
 
 import json
+import random
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+import anyio
+
 from attractor_agent.abort import AbortSignal
 from attractor_pipeline.conditions import evaluate_condition
 from attractor_pipeline.graph import Edge, Graph, Node
 from attractor_pipeline.stylesheet import apply_stylesheet
+
+# Pipeline retry backoff constants (Spec §3.6)
+_RETRY_INITIAL_DELAY = 0.2  # 200ms
+_RETRY_BACKOFF_FACTOR = 2.0
+_RETRY_MAX_DELAY = 60.0  # 60 seconds
+
+
+def _compute_retry_delay(attempt: int) -> float:
+    """Compute exponential backoff delay with jitter for pipeline retries."""
+    delay = _RETRY_INITIAL_DELAY * (_RETRY_BACKOFF_FACTOR**attempt)
+    delay = min(delay, _RETRY_MAX_DELAY)
+    # Equal jitter: uniform in [delay/2, delay]
+    delay = delay * (0.5 + random.random() * 0.5)  # noqa: S311
+    return delay
+
 
 # ------------------------------------------------------------------ #
 # Handler protocol
@@ -392,6 +410,9 @@ async def run_pipeline(
         if result.status in (Outcome.FAIL, Outcome.RETRY):
             if retry_count < max_retries:
                 node_retry_counts[current_node.id] = retry_count + 1
+                # Exponential backoff with jitter (Spec §3.6)
+                delay = _compute_retry_delay(retry_count)
+                await anyio.sleep(delay)
                 continue  # retry same node
             # Max retries exhausted -- fall through to edge selection
 
@@ -407,6 +428,44 @@ async def run_pipeline(
                 status="running",
             )
             ckpt.save(logs_root / "checkpoint.json")
+
+        # Check goal gate on ANY node with goal_gate set (Spec §3.4)
+        # Exit nodes handle their own goal gate below.
+        if current_node.shape != "Msquare" and current_node.goal_gate:
+            gate_vars = {
+                "outcome": result.status.value,
+                **ctx,
+            }
+            if not evaluate_condition(current_node.goal_gate, gate_vars):
+                goal_gate_redirect_count += 1
+
+                # Circuit breaker
+                if (
+                    graph.max_goal_gate_redirects > 0
+                    and goal_gate_redirect_count >= graph.max_goal_gate_redirects
+                ):
+                    return PipelineResult(
+                        status=PipelineStatus.FAILED,
+                        error=(
+                            f"Goal gate on node '{current_node.id}' unsatisfied after "
+                            f"{goal_gate_redirect_count} redirects "
+                            f"(limit: {graph.max_goal_gate_redirects})"
+                        ),
+                        context=ctx,
+                        completed_nodes=completed_nodes,
+                        final_outcome=result,
+                        duration_seconds=time.monotonic() - start_time,
+                    )
+
+                # Redirect to retry target
+                retry_target = current_node.retry_target
+                if retry_target:
+                    target_node = graph.get_node(retry_target)
+                    if target_node:
+                        current_node = target_node
+                        continue
+
+                # No retry target -- fall through to normal edge selection
 
         # Check if this is an exit node
         if current_node.shape == "Msquare":

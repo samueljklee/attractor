@@ -10,6 +10,7 @@ Spec reference: attractor-spec §4.5.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -93,20 +94,45 @@ class CodergenHandler:
                 failure_reason=f"{type(exc).__name__}: {exc}",
             )
 
-        # Normalize result
+        # Normalize result to HandlerResult
         if isinstance(result, str):
             # Plain string -> wrap as SUCCESS
             context[f"codergen.{node.id}.output"] = result
-            return HandlerResult(
+            handler_result = HandlerResult(
                 status=Outcome.SUCCESS,
                 output=result,
                 notes=f"Codergen node '{node.id}' completed",
             )
+        else:
+            # Already a HandlerResult
+            if result.output:
+                context[f"codergen.{node.id}.output"] = result.output
+            handler_result = result
 
-        # Already a HandlerResult
-        if result.output:
-            context[f"codergen.{node.id}.output"] = result.output
-        return result
+        # Write per-node artifact files (Spec §5.6)
+        if logs_root is not None:
+            node_dir = Path(logs_root) / node.id
+            node_dir.mkdir(parents=True, exist_ok=True)
+
+            # prompt.md -- the expanded prompt sent to the LLM
+            (node_dir / "prompt.md").write_text(prompt, encoding="utf-8")
+
+            # response.md -- the LLM response text
+            (node_dir / "response.md").write_text(handler_result.output or "", encoding="utf-8")
+
+            # status.json -- the handler result metadata
+            status_data = {
+                "node_id": node.id,
+                "status": handler_result.status.value,
+                "preferred_label": handler_result.preferred_label,
+                "failure_reason": handler_result.failure_reason,
+                "notes": handler_result.notes,
+            }
+            (node_dir / "status.json").write_text(
+                json.dumps(status_data, indent=2), encoding="utf-8"
+            )
+
+        return handler_result
 
     def _expand_prompt(self, node: Node, context: dict[str, Any], graph: Graph) -> str:
         """Expand template variables in the node's prompt.

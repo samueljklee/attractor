@@ -360,7 +360,7 @@ EDIT_FILE = _make_tool(
 # shell
 # ------------------------------------------------------------------ #
 
-DEFAULT_SHELL_TIMEOUT = 120
+DEFAULT_SHELL_TIMEOUT = 10
 
 
 async def _shell(

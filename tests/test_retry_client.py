@@ -14,7 +14,7 @@ import pytest
 from attractor_llm.client import Client
 from attractor_llm.errors import (
     AuthenticationError,
-    InvalidRequestError,
+    ConfigurationError,
     RateLimitError,
     SDKError,
     ServerError,
@@ -239,7 +239,7 @@ class TestClient:
     async def test_unknown_provider_raises(self):
         client = Client()
 
-        with pytest.raises(InvalidRequestError, match="not registered"):
+        with pytest.raises(ConfigurationError, match="not registered"):
             await client.complete(
                 Request(model="x", provider="nonexistent", messages=[Message.user("hi")])
             )
@@ -249,7 +249,7 @@ class TestClient:
         client = Client()
         # No adapters registered, unknown model name
 
-        with pytest.raises(InvalidRequestError, match="Cannot resolve"):
+        with pytest.raises(ConfigurationError, match="Cannot resolve"):
             await client.complete(Request(model="unknown-model-xyz", messages=[Message.user("hi")]))
 
     @pytest.mark.asyncio

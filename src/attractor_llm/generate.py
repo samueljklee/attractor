@@ -29,25 +29,30 @@ Spec reference: unified-llm-spec §4.3-4.6.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
 
 from attractor_llm.client import Client
 from attractor_llm.types import (
+    ContentPart,
     FinishReason,
+    GenerateResult,
     Message,
     Request,
     Response,
+    StepResult,
     StreamEventKind,
     Tool,
+    Usage,
 )
 
 
 async def generate(
     client: Client,
     model: str,
-    prompt: str,
+    prompt: str | None = None,
     *,
     system: str | None = None,
     messages: list[Message] | None = None,
@@ -56,7 +61,7 @@ async def generate(
     temperature: float | None = None,
     reasoning_effort: str | None = None,
     provider: str | None = None,
-) -> str:
+) -> GenerateResult:
     """Generate text with automatic tool execution loop.
 
     If the model returns tool calls, executes them and feeds results
@@ -77,8 +82,23 @@ async def generate(
     Returns:
         The model's final text response.
     """
-    history = list(messages or [])
-    history.append(Message.user(prompt))
+    # Spec §4.3: Cannot provide both prompt and messages
+    if prompt is not None and messages is not None:
+        from attractor_llm.errors import InvalidRequestError
+
+        raise InvalidRequestError("Cannot provide both 'prompt' and 'messages'")
+    if prompt is None and messages is None:
+        from attractor_llm.errors import InvalidRequestError
+
+        raise InvalidRequestError("Must provide either 'prompt' or 'messages'")
+
+    if messages is not None:
+        history = list(messages)
+    else:
+        history = [Message.user(prompt)]  # type: ignore[arg-type]
+
+    steps: list[StepResult] = []
+    total_usage = Usage()
 
     response: Response | None = None
     for _round in range(max_rounds + 1):
@@ -93,33 +113,51 @@ async def generate(
         )
 
         response = await client.complete(request)
+        total_usage = total_usage + response.usage
         history.append(response.message)
 
         # If no tool calls, return text
         if response.finish_reason != FinishReason.TOOL_CALLS:
-            return response.text or ""
+            steps.append(StepResult(response=response))
+            return GenerateResult(
+                text=response.text or "",
+                steps=steps,
+                total_usage=total_usage,
+            )
 
         if not tools:
-            return response.text or ""
+            steps.append(StepResult(response=response))
+            return GenerateResult(
+                text=response.text or "",
+                steps=steps,
+                total_usage=total_usage,
+            )
 
-        # Execute tool calls
-        for tc in response.tool_calls:
+        # Execute tool calls in parallel (Spec §5.7)
+        async def _exec_one(tc: ContentPart) -> tuple[ContentPart, str, bool]:
+            """Execute a single tool call, return (tool_call, output, is_error)."""
             tool = _find_tool(tools, tc.name or "")
             if tool and tool.execute:
                 try:
                     args = tc.arguments
                     if isinstance(args, str):
                         args = json.loads(args)
-                    result = await tool.execute(**args)
-                    output = str(result) if not isinstance(result, str) else result
-                    is_error = False
+                    raw = await tool.execute(**args)
+                    output = str(raw) if not isinstance(raw, str) else raw
+                    return tc, output, False
                 except Exception as exc:  # noqa: BLE001
-                    output = f"{type(exc).__name__}: {exc}"
-                    is_error = True
+                    return tc, f"{type(exc).__name__}: {exc}", True
             else:
-                output = f"Unknown tool: {tc.name}"
-                is_error = True
+                return tc, f"Unknown tool: {tc.name}", True
 
+        if len(response.tool_calls) == 1:
+            exec_results = [await _exec_one(response.tool_calls[0])]
+        else:
+            exec_results = await asyncio.gather(
+                *(_exec_one(tc) for tc in response.tool_calls),
+            )
+
+        for tc, output, is_error in exec_results:
             history.append(
                 Message.tool_result(
                     tc.tool_call_id or "",
@@ -129,9 +167,19 @@ async def generate(
                 )
             )
 
+        # Record this step
+        tool_results = [
+            ContentPart.tool_result_part(
+                tc.tool_call_id or "", tc.name or "", output, is_error=is_error
+            )
+            for tc, output, is_error in exec_results
+        ]
+        steps.append(StepResult(response=response, tool_results=tool_results))
+
+    text = "[No response generated]"
     if response is not None:
-        return response.text or "[Max tool rounds reached]"
-    return "[No response generated]"
+        text = response.text or "[Max tool rounds reached]"
+    return GenerateResult(text=text, steps=steps, total_usage=total_usage)
 
 
 async def stream(
