@@ -22,6 +22,7 @@ from attractor_llm.errors import (
     StreamError,
     ToolError,
 )
+from attractor_llm.generate import generate, generate_object, stream
 from attractor_llm.retry import RetryPolicy, retry_with_policy
 from attractor_llm.streaming import StreamAccumulator
 from attractor_llm.types import (
@@ -86,4 +87,8 @@ __all__ = [
     "get_default_model",
     # Streaming
     "StreamAccumulator",
+    # High-level API
+    "generate",
+    "stream",
+    "generate_object",
 ]

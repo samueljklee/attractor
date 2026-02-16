@@ -157,10 +157,13 @@ class ToolRegistry:
             List of ContentParts with kind=TOOL_RESULT, in the same order.
         """
         if len(tool_calls) <= 1:
-            # Single tool call: no gather overhead needed
+            # Single tool call: sequential execution, no filesystem race risk.
             return [await self.execute_tool_call(tc) for tc in tool_calls]
 
         # Multiple tool calls: execute concurrently
+        # NOTE: Filesystem-mutating tools (edit_file, write_file) may race when
+        # targeting the same file. Per Spec §5.7 we execute concurrently; callers
+        # should avoid issuing conflicting writes in the same batch.
         results = await asyncio.gather(
             *(self.execute_tool_call(tc) for tc in tool_calls),
             return_exceptions=True,
@@ -169,6 +172,10 @@ class ToolRegistry:
         # Convert any unexpected exceptions to error results
         final: list[ContentPart] = []
         for i, result in enumerate(results):
+            if isinstance(result, (KeyboardInterrupt, SystemExit)):
+                raise result
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if isinstance(result, BaseException):
                 tc = tool_calls[i]
                 final.append(
