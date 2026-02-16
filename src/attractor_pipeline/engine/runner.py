@@ -18,7 +18,6 @@ Spec reference: attractor-spec §3.1-3.8.
 from __future__ import annotations
 
 import json
-import random
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -28,23 +27,13 @@ from typing import Any, Protocol
 import anyio
 
 from attractor_agent.abort import AbortSignal
+from attractor_llm.retry import RetryPolicy
 from attractor_pipeline.conditions import evaluate_condition
 from attractor_pipeline.graph import Edge, Graph, Node
 from attractor_pipeline.stylesheet import apply_stylesheet
 
-# Pipeline retry backoff constants (Spec §3.6)
-_RETRY_INITIAL_DELAY = 0.2  # 200ms
-_RETRY_BACKOFF_FACTOR = 2.0
-_RETRY_MAX_DELAY = 60.0  # 60 seconds
-
-
-def _compute_retry_delay(attempt: int) -> float:
-    """Compute exponential backoff delay with jitter for pipeline retries."""
-    delay = _RETRY_INITIAL_DELAY * (_RETRY_BACKOFF_FACTOR**attempt)
-    delay = min(delay, _RETRY_MAX_DELAY)
-    # Equal jitter: uniform in [delay/2, delay]
-    delay = delay * (0.5 + random.random() * 0.5)  # noqa: S311
-    return delay
+# Pipeline retry backoff policy (Spec §3.6)
+_PIPELINE_RETRY = RetryPolicy(initial_delay=0.2, max_retries=0)
 
 
 # ------------------------------------------------------------------ #
@@ -411,7 +400,7 @@ async def run_pipeline(
             if retry_count < max_retries:
                 node_retry_counts[current_node.id] = retry_count + 1
                 # Exponential backoff with jitter (Spec §3.6)
-                delay = _compute_retry_delay(retry_count)
+                delay = _PIPELINE_RETRY.compute_delay(retry_count)
                 await anyio.sleep(delay)
                 continue  # retry same node
             # Max retries exhausted -- fall through to edge selection

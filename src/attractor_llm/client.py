@@ -12,7 +12,7 @@ from typing import Any
 
 from attractor_llm.adapters.base import ProviderAdapter
 from attractor_llm.catalog import get_model_info
-from attractor_llm.errors import ConfigurationError, InvalidRequestError, SDKError
+from attractor_llm.errors import ConfigurationError, SDKError
 from attractor_llm.retry import RetryPolicy, retry_with_policy
 from attractor_llm.types import (
     Request,
@@ -59,7 +59,7 @@ class Client:
         self._adapters[provider] = adapter
 
     @classmethod
-    async def from_env(cls, **kwargs: Any) -> Client:
+    def from_env(cls, **kwargs: Any) -> Client:
         """Create a Client with providers auto-detected from environment variables.
 
         Checks for standard API key env vars and registers the corresponding
@@ -109,7 +109,7 @@ class Client:
         3. Fail with InvalidRequestError
 
         Raises:
-            InvalidRequestError: If no adapter can be resolved.
+            ConfigurationError: If no adapter can be resolved.
         """
         # 1. Explicit provider
         if request.provider:
@@ -205,11 +205,11 @@ def get_default_client() -> Client:
     """Get the module-level default client. Spec §2.2.
 
     Raises:
-        InvalidRequestError: If no default client has been set.
+        ConfigurationError: If no default client has been set.
     """
     if _default_client is None:
-        raise InvalidRequestError(
+        raise ConfigurationError(
             "No default client configured. "
-            "Call set_default_client() or await Client.from_env() first."
+            "Call set_default_client() or Client.from_env() first."
         )
     return _default_client

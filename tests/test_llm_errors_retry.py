@@ -143,7 +143,7 @@ class TestRetryPolicy:
     def test_defaults(self):
         p = RetryPolicy()
         assert p.max_retries == 3
-        assert p.initial_delay == 1.0
+        assert p.initial_delay == 0.2
         assert p.backoff_factor == 2.0
 
     def test_compute_delay_exponential(self):

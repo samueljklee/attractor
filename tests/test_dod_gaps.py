@@ -20,7 +20,7 @@ from attractor_llm.adapters.base import ProviderConfig
 from attractor_llm.adapters.gemini import GeminiAdapter
 from attractor_llm.adapters.openai import OpenAIAdapter
 from attractor_llm.client import Client
-from attractor_llm.errors import InvalidRequestError
+from attractor_llm.errors import ConfigurationError, InvalidRequestError
 from attractor_llm.generate import generate
 from attractor_llm.types import (
     ContentPart,
@@ -136,68 +136,62 @@ class TestPipelineRetryBackoff:
 class TestClientFromEnv:
     """P1 #3: Client.from_env() should auto-detect providers from env vars."""
 
-    @pytest.mark.asyncio
-    async def test_detects_openai_key(self, monkeypatch):
+    def test_detects_openai_key(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key-openai")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-        client = await Client.from_env()
+        client = Client.from_env()
         assert "openai" in client._adapters
         assert "anthropic" not in client._adapters
         assert "gemini" not in client._adapters
 
-    @pytest.mark.asyncio
-    async def test_detects_anthropic_key(self, monkeypatch):
+    def test_detects_anthropic_key(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-anthropic")
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-        client = await Client.from_env()
+        client = Client.from_env()
         assert "anthropic" in client._adapters
         assert "openai" not in client._adapters
 
-    @pytest.mark.asyncio
-    async def test_detects_gemini_key(self, monkeypatch):
+    def test_detects_gemini_key(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setenv("GEMINI_API_KEY", "test-key-gemini")
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-        client = await Client.from_env()
+        client = Client.from_env()
         assert "gemini" in client._adapters
 
-    @pytest.mark.asyncio
-    async def test_detects_google_api_key_as_gemini(self, monkeypatch):
+    def test_detects_google_api_key_as_gemini(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.setenv("GOOGLE_API_KEY", "test-key-google")
 
-        client = await Client.from_env()
+        client = Client.from_env()
         assert "gemini" in client._adapters
 
-    @pytest.mark.asyncio
-    async def test_detects_multiple_providers(self, monkeypatch):
+    def test_detects_multiple_providers(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key-openai")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-anthropic")
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-        client = await Client.from_env()
+        client = Client.from_env()
         assert "openai" in client._adapters
         assert "anthropic" in client._adapters
 
-    @pytest.mark.asyncio
-    async def test_no_keys_returns_empty_client(self, monkeypatch):
+    def test_no_keys_returns_empty_client(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-        client = await Client.from_env()
+        client = Client.from_env()
         assert len(client._adapters) == 0
 
 
@@ -212,7 +206,7 @@ class TestDefaultClient:
         saved = client_mod._default_client
         client_mod._default_client = None
         try:
-            with pytest.raises(InvalidRequestError, match="No default client"):
+            with pytest.raises(ConfigurationError, match="No default client"):
                 get_default_client()
         finally:
             client_mod._default_client = saved
@@ -457,7 +451,7 @@ class TestConfigurationError:
     """P2 #14: ConfigurationError for SDK misconfiguration (Spec §6)."""
 
     def test_configuration_error_exists(self):
-        from attractor_llm.errors import ConfigurationError, SDKError
+        from attractor_llm.errors import SDKError
 
         err = ConfigurationError("bad config")
         assert isinstance(err, SDKError)
@@ -465,8 +459,6 @@ class TestConfigurationError:
 
     @pytest.mark.asyncio
     async def test_client_resolve_raises_configuration_error(self):
-        from attractor_llm.errors import ConfigurationError
-
         client = Client()
         # No adapters registered
         request = Request(model="some-model", messages=[Message.user("hi")])

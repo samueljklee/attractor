@@ -62,7 +62,7 @@ async def generate(
     reasoning_effort: str | None = None,
     provider: str | None = None,
 ) -> GenerateResult:
-    """Generate text with automatic tool execution loop.
+    """Generate text with automatic tool execution loop. Spec §4.3.
 
     If the model returns tool calls, executes them and feeds results
     back until the model produces a text response or max_rounds is hit.
@@ -70,9 +70,9 @@ async def generate(
     Args:
         client: The LLM client with registered adapters.
         model: Model ID (e.g., "claude-sonnet-4-5").
-        prompt: User prompt string.
+        prompt: User prompt string (mutually exclusive with messages).
         system: Optional system prompt.
-        messages: Optional conversation history (prompt is appended).
+        messages: Optional conversation history (mutually exclusive with prompt).
         tools: Optional tools for the model to call.
         max_rounds: Max tool-call rounds before stopping.
         temperature: Optional temperature override.
@@ -80,7 +80,8 @@ async def generate(
         provider: Optional provider override.
 
     Returns:
-        The model's final text response.
+        GenerateResult with text, step history, and aggregated token usage.
+        Backward-compatible: str(result) returns text, result == "string" works.
     """
     # Spec §4.3: Cannot provide both prompt and messages
     if prompt is not None and messages is not None:
@@ -155,7 +156,19 @@ async def generate(
         else:
             exec_results = await asyncio.gather(
                 *(_exec_one(tc) for tc in response.tool_calls),
+                return_exceptions=True,
             )
+            # Convert any unexpected BaseExceptions to error results
+            final_results: list[tuple[ContentPart, str, bool]] = []
+            for i, r in enumerate(exec_results):
+                if isinstance(r, BaseException):
+                    tc = response.tool_calls[i]
+                    final_results.append(
+                        (tc, f"{type(r).__name__}: {r}", True)
+                    )
+                else:
+                    final_results.append(r)
+            exec_results = final_results
 
         for tc, output, is_error in exec_results:
             history.append(

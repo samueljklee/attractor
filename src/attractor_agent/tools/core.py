@@ -402,7 +402,7 @@ SHELL = _make_tool(
     name="shell",
     description=(
         "Execute a shell command via bash. Returns stdout, stderr, "
-        "and exit code. Subject to timeout (default 120s) and "
+        "and exit code. Subject to timeout (default 10s) and "
         "command safety filtering."
     ),
     parameters={
@@ -414,7 +414,7 @@ SHELL = _make_tool(
             },
             "timeout": {
                 "type": "integer",
-                "description": "Timeout in seconds. Default: 120",
+                "description": "Timeout in seconds. Default: 10",
                 "default": DEFAULT_SHELL_TIMEOUT,
             },
             "working_dir": {

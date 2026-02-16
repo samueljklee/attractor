@@ -1,5 +1,7 @@
 # DoD Spec Compliance Implementation Plan
 
+> **Status: COMPLETED** — Merged in commit 78f3ac7.
+
 > **Execution:** Use the subagent-driven-development workflow to implement this plan.
 
 **Goal:** Fix the top-priority gaps (P1 critical + P2 medium) in Attractor's implementation against the StrongDM nlspec Definition of Done checklists.
@@ -28,7 +30,7 @@
 **Step 1: Create the feature branch**
 
 ```bash
-cd /home/bkrabach/dev/unified-llm/samueljklee-attractor
+cd <project-root>
 git checkout -b fix/dod-spec-compliance
 ```
 
