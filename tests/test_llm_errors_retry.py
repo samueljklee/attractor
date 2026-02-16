@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from attractor_llm.errors import (
+    AccessDeniedError,
     AuthenticationError,
     ContentFilterError,
     InvalidRequestError,
@@ -90,9 +91,10 @@ class TestClassifyHttpError:
         assert err.retryable is False
         assert err.provider == "anthropic"
 
-    def test_403_is_auth_error(self):
+    def test_403_is_access_denied_error(self):
         err = classify_http_error(403, "forbidden", "openai")
-        assert isinstance(err, AuthenticationError)
+        assert isinstance(err, AccessDeniedError)
+        assert err.retryable is False
 
     def test_429_is_rate_limit(self):
         err = classify_http_error(429, "too many", "anthropic")
@@ -125,12 +127,12 @@ class TestClassifyHttpError:
 
     def test_408_is_retryable(self):
         err = classify_http_error(408, "timeout", "openai")
-        assert isinstance(err, ProviderError)
+        assert isinstance(err, RequestTimeoutError)
         assert err.retryable is True
 
-    def test_400_is_not_retryable(self):
+    def test_400_is_invalid_request(self):
         err = classify_http_error(400, "bad request", "anthropic")
-        assert isinstance(err, ProviderError)
+        assert isinstance(err, InvalidRequestError)
         assert err.retryable is False
 
 

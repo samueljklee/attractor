@@ -1,7 +1,7 @@
 """Graph validation and lint rules for Attractor pipelines.
 
 Validates DOT pipeline graphs before execution, catching structural
-errors early with clear diagnostic messages. Implements the 12 built-in
+errors early with clear diagnostic messages. Implements the 14 built-in
 rules from attractor-spec §7.2.
 
 Each rule produces Diagnostic objects with severity (ERROR, WARNING, INFO)
@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from attractor_pipeline.conditions import evaluate_condition
 from attractor_pipeline.graph import Graph
 
 
@@ -319,6 +320,49 @@ def _rule_has_goal(graph: Graph) -> list[Diagnostic]:
     return []
 
 
+def _rule_prompt_on_llm_nodes(graph: Graph) -> list[Diagnostic]:
+    """R13: LLM task nodes (shape=box) should have a prompt or label."""
+    results: list[Diagnostic] = []
+    for node in graph.nodes.values():
+        if node.shape == "box" and not node.prompt and not node.label:
+            results.append(
+                Diagnostic(
+                    rule="R13",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"LLM node '{node.id}' has no 'prompt' or 'label' attribute. "
+                        f"Consider adding one so the handler knows what to do."
+                    ),
+                    node_id=node.id,
+                )
+            )
+    return results
+
+
+def _rule_condition_syntax(graph: Graph) -> list[Diagnostic]:
+    """R14: Edge condition expressions must parse without errors."""
+    results: list[Diagnostic] = []
+    dummy_vars: dict[str, str] = {"outcome": "success", "preferred_label": ""}
+    for i, edge in enumerate(graph.edges):
+        if not edge.condition:
+            continue
+        try:
+            evaluate_condition(edge.condition, dummy_vars)
+        except Exception as exc:  # noqa: BLE001
+            results.append(
+                Diagnostic(
+                    rule="R14",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"Edge {edge.source} -> {edge.target} has invalid condition "
+                        f"'{edge.condition}': {exc}"
+                    ),
+                    edge_index=i,
+                )
+            )
+    return results
+
+
 # ------------------------------------------------------------------ #
 # Rule registry
 # ------------------------------------------------------------------ #
@@ -336,4 +380,6 @@ ALL_RULES = [
     _rule_retry_target_exists,
     _rule_no_self_loops,
     _rule_has_goal,
+    _rule_prompt_on_llm_nodes,
+    _rule_condition_syntax,
 ]

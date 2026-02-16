@@ -410,6 +410,8 @@ class TestGenerateAPI:
 
     @pytest.mark.asyncio
     async def test_generate_object_invalid_json_raises(self):
+        from attractor_llm.errors import NoObjectGeneratedError
+
         adapter = MockAdapter(
             responses=[
                 make_text_response("not json at all"),
@@ -418,7 +420,7 @@ class TestGenerateAPI:
         client = Client()
         client.register_adapter("mock", adapter)
 
-        with pytest.raises(ValueError, match="not valid JSON"):
+        with pytest.raises(NoObjectGeneratedError, match="not valid JSON"):
             await generate_object(
                 client,
                 "mock-model",
