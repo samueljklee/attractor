@@ -39,6 +39,7 @@ class EventKind(StrEnum):
     # Limits and errors
     LIMIT_REACHED = "limit.reached"
     LOOP_DETECTED = "loop.detected"
+    CONTEXT_WINDOW_WARNING = "context_window.warning"
     ERROR = "error"
 
 

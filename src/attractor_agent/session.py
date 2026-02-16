@@ -18,6 +18,7 @@ from typing import Any
 from attractor_agent.abort import AbortSignal
 from attractor_agent.events import EventEmitter, EventKind, SessionEvent
 from attractor_agent.tools.registry import ToolRegistry
+from attractor_llm.catalog import get_model_info
 from attractor_llm.client import Client
 from attractor_llm.types import (
     Message,
@@ -157,6 +158,9 @@ class Session:
         # Steering queue: messages injected between tool rounds
         self._steer_queue: list[str] = []
 
+        # Follow-up queue: messages processed after main loop completes (Spec §9.6)
+        self._followup_queue: list[str] = []
+
         # Loop detection
         self._loop_detector = _LoopDetector(
             window=self._config.loop_detection_window or 4,
@@ -201,6 +205,15 @@ class Session:
         """
         self._steer_queue.append(message)
 
+    def follow_up(self, message: str) -> None:
+        """Queue a follow-up message for after the current loop completes. Spec §2.6, §9.6.
+
+        The message will be processed as a new user input after the current
+        submit() call's main loop returns a text response, triggering a new
+        processing cycle.
+        """
+        self._followup_queue.append(message)
+
     async def submit(self, prompt: str) -> str:
         """Submit a user prompt and run the agentic loop to completion.
 
@@ -241,6 +254,12 @@ class Session:
 
         try:
             result = await self._run_loop()
+
+            # Spec §9.6: process follow-up messages after main loop completes
+            while self._followup_queue:
+                msg = self._followup_queue.pop(0)
+                self._history.append(Message.user(msg))
+                result = await self._run_loop()
         except Exception as exc:
             await self._emitter.emit(
                 SessionEvent(
@@ -250,7 +269,11 @@ class Session:
             )
             result = f"[Error: {exc}]"
         finally:
-            self._state = SessionState.IDLE
+            # Spec §9.1: abort transitions to CLOSED (not IDLE)
+            if self._abort.is_set:
+                self._state = SessionState.CLOSED
+            else:
+                self._state = SessionState.IDLE
             await self._emitter.emit(
                 SessionEvent(
                     kind=EventKind.TURN_END,
@@ -260,6 +283,8 @@ class Session:
                     },
                 )
             )
+            if self._abort.is_set:
+                await self._emitter.emit(SessionEvent(kind=EventKind.SESSION_END))
 
         return result
 
@@ -391,8 +416,38 @@ class Session:
                 messages.append(entry)
         return messages
 
+    def _estimate_history_tokens(self) -> int:
+        """Rough token count estimate (~4 chars per token). Spec §9.11."""
+        total_chars = len(self._config.system_prompt) if self._config.system_prompt else 0
+        for msg in self._history:
+            for part in msg.content:
+                if part.text:
+                    total_chars += len(part.text)
+                if part.output:
+                    total_chars += len(part.output)
+                if part.arguments:
+                    total_chars += len(str(part.arguments))
+        return total_chars // 4
+
     async def _call_llm(self) -> Response:
         """Build a request from current history and call the LLM."""
+        # Spec §9.11: context window overflow detection
+        model_info = get_model_info(self._config.model)
+        if model_info:
+            estimated_tokens = self._estimate_history_tokens()
+            threshold = int(model_info.context_window * 0.8)
+            if estimated_tokens > threshold:
+                await self._emitter.emit(
+                    SessionEvent(
+                        kind=EventKind.CONTEXT_WINDOW_WARNING,
+                        data={
+                            "estimated_tokens": estimated_tokens,
+                            "context_window": model_info.context_window,
+                            "threshold_pct": 80,
+                        },
+                    )
+                )
+
         tools = self._tool_registry.definitions()
 
         # Build enriched system prompt with environment context
