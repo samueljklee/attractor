@@ -42,6 +42,7 @@ from attractor_pipeline.engine.runner import (
     run_pipeline,
 )
 from attractor_pipeline.graph import Edge
+from attractor_pipeline.handlers.basic import ExitHandler, StartHandler
 from tests.helpers import MockAdapter, make_text_response, make_tool_call_response
 
 # ================================================================== #
@@ -764,27 +765,45 @@ class TestGenerateResultType:
 
 
 class TestPerNodeArtifacts:
-    """P2 #10: Codergen handler should write per-node artifact files (Spec §5.6)."""
+    """P2 #10: Engine writes per-node artifact files for ALL nodes (Spec §5.6).
+
+    Wave 4 moved artifact writing from CodergenHandler into the engine
+    so that every node type gets artifacts, not just codergen.
+    """
 
     @pytest.mark.asyncio
     async def test_codergen_writes_artifact_files(self, tmp_path):
-        """Handler should create {logs_root}/{node_id}/ with artifacts."""
+        """Engine should create {logs_root}/{node_id}/ with artifacts for codergen."""
         from attractor_pipeline.handlers.codergen import CodergenHandler
 
         class _MockBackend:
             async def run(self, node, prompt, context, abort_signal):
                 return "LLM response text"
 
-        handler = CodergenHandler(backend=_MockBackend())
-        node = Node(id="my_node", shape="box", prompt="Do something: ${goal}")
-        context: dict[str, Any] = {}
-        graph = Graph(name="test", goal="test goal")
         logs_root = tmp_path / "logs"
         logs_root.mkdir()
 
-        result = await handler.execute(node, context, graph, logs_root, None)
+        g = Graph(
+            name="test",
+            goal="test goal",
+            nodes={
+                "start": Node(id="start", shape="ellipse"),
+                "my_node": Node(id="my_node", shape="box", prompt="Do something: ${goal}"),
+                "done": Node(id="done", shape="Msquare"),
+            },
+            edges=[
+                Edge(source="start", target="my_node"),
+                Edge(source="my_node", target="done"),
+            ],
+        )
 
-        assert result.status == Outcome.SUCCESS
+        registry = HandlerRegistry()
+        registry.register("start", StartHandler())
+        registry.register("exit", ExitHandler())
+        registry.register("codergen", CodergenHandler(backend=_MockBackend()))
+
+        result = await run_pipeline(g, registry, logs_root=logs_root)
+        assert result.status == PipelineStatus.COMPLETED
 
         # Check artifact directory exists
         node_dir = logs_root / "my_node"
@@ -817,13 +836,26 @@ class TestPerNodeArtifacts:
             async def run(self, node, prompt, context, abort_signal):
                 return "response"
 
-        handler = CodergenHandler(backend=_MockBackend())
-        node = Node(id="node1", shape="box", prompt="Do it")
-        context: dict[str, Any] = {}
-        graph = Graph(name="test")
+        g = Graph(
+            name="test",
+            nodes={
+                "start": Node(id="start", shape="ellipse"),
+                "node1": Node(id="node1", shape="box", prompt="Do it"),
+                "done": Node(id="done", shape="Msquare"),
+            },
+            edges=[
+                Edge(source="start", target="node1"),
+                Edge(source="node1", target="done"),
+            ],
+        )
 
-        result = await handler.execute(node, context, graph, None, None)
-        assert result.status == Outcome.SUCCESS
+        registry = HandlerRegistry()
+        registry.register("start", StartHandler())
+        registry.register("exit", ExitHandler())
+        registry.register("codergen", CodergenHandler(backend=_MockBackend()))
+
+        result = await run_pipeline(g, registry, logs_root=None)
+        assert result.status == PipelineStatus.COMPLETED
         # No crash, no files written (nothing to assert on filesystem)
 
 

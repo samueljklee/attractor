@@ -304,6 +304,129 @@ def _check_goal_gate(
     return ("no_retry_target", redirect_count, None)
 
 
+def _safe_node_id(node_id: str) -> str:
+    """Sanitize node ID for use as a directory name (defense-in-depth)."""
+    return node_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+
+
+def _write_node_artifacts(
+    logs_root: Path,
+    node: Node,
+    result: HandlerResult,
+    context: dict[str, Any],
+) -> None:
+    """Write per-node artifact files for ANY node. Spec §5.6, §11.3, §11.7.
+
+    Every executed node gets ``status.json``.  Nodes that have a prompt
+    and/or LLM response also get ``prompt.md`` and ``response.md``.
+
+    Artifact writing is *observability*, not core logic -- I/O errors
+    are swallowed so they never tank the pipeline.
+    """
+    try:
+        safe_id = _safe_node_id(node.id)
+        node_dir = logs_root / safe_id
+        node_dir.mkdir(parents=True, exist_ok=True)
+
+        # status.json -- always written for every node
+        status_data = {
+            "node_id": node.id,
+            "status": result.status.value,
+            "preferred_label": result.preferred_label,
+            "failure_reason": result.failure_reason,
+            "notes": result.notes,
+        }
+        (node_dir / "status.json").write_text(
+            json.dumps(status_data, indent=2), encoding="utf-8"
+        )
+
+        # prompt.md -- expanded prompt (codergen) or raw prompt (others)
+        prompt = context.get(f"_artifact_prompt.{node.id}", "") or node.prompt or ""
+        if prompt:
+            (node_dir / "prompt.md").write_text(prompt, encoding="utf-8")
+
+        # response.md -- handler output text (if any)
+        if result.output:
+            (node_dir / "response.md").write_text(result.output, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        # Artifact writing is observability, not core logic.
+        # Don't let I/O errors tank the pipeline.
+        pass
+
+
+def _check_aggregate_goal_gates(
+    graph: Graph,
+    completed_nodes: list[str],
+    node_outcomes: dict[str, Outcome],
+    ctx: dict[str, Any],
+    redirect_count: int,
+    start_time: float,
+) -> tuple[str, int, Node | PipelineResult | None]:
+    """Check ALL visited goal-gate nodes in aggregate at exit. Spec §3.4.
+
+    When the traversal reaches a terminal node, every *visited* node
+    whose ``goal_gate`` attribute is set is re-evaluated using its
+    stored outcome.  If any gate is unsatisfied the pipeline redirects
+    to that node's ``retry_target`` (or fails if none is configured).
+
+    Returns the same 3-tuple as ``_check_goal_gate``:
+    ``("pass" | "redirect" | "fail" | "no_retry_target", count, payload)``.
+    """
+    seen: set[str] = set()
+    for node_id in completed_nodes:
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+
+        node = graph.get_node(node_id)
+        if node is None or not node.goal_gate:
+            continue
+
+        outcome = node_outcomes.get(node_id)
+        if outcome is None:
+            continue
+
+        gate_vars: dict[str, Any] = {"outcome": outcome.value, **ctx}
+        if evaluate_condition(node.goal_gate, gate_vars):
+            continue  # gate satisfied
+
+        # Gate failed
+        redirect_count += 1
+
+        # Circuit breaker (Spec §3.4 + Issue 2 design)
+        if (
+            graph.max_goal_gate_redirects > 0
+            and redirect_count >= graph.max_goal_gate_redirects
+        ):
+            return (
+                "fail",
+                redirect_count,
+                PipelineResult(
+                    status=PipelineStatus.FAILED,
+                    error=(
+                        f"Aggregate goal gate on node '{node_id}' unsatisfied after "
+                        f"{redirect_count} redirects "
+                        f"(limit: {graph.max_goal_gate_redirects})"
+                    ),
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    duration_seconds=time.monotonic() - start_time,
+                ),
+            )
+
+        # Redirect to retry target
+        retry_target = node.retry_target
+        if retry_target:
+            target_node = graph.get_node(retry_target)
+            if target_node:
+                return ("redirect", redirect_count, target_node)
+
+        # No retry target configured
+        return ("no_retry_target", redirect_count, None)
+
+    return ("pass", redirect_count, None)
+
+
 async def run_pipeline(
     graph: Graph,
     handlers: HandlerRegistry,
@@ -344,6 +467,7 @@ async def run_pipeline(
     # State tracking
     completed_nodes: list[str] = []
     node_retry_counts: dict[str, int] = {}
+    node_outcomes: dict[str, Outcome] = {}  # for aggregate goal gate check (Spec §3.4)
     goal_gate_redirect_count = 0
 
     # Resume from checkpoint if provided
@@ -469,6 +593,13 @@ async def run_pipeline(
                 continue  # retry same node
             # Max retries exhausted -- fall through to edge selection
 
+        # Track final node outcome for aggregate goal gate check (Spec §3.4)
+        node_outcomes[current_node.id] = result.status
+
+        # Write per-node artifacts for EVERY node (Spec §5.6, §11.3, §11.7)
+        if logs_root:
+            _write_node_artifacts(logs_root, current_node, result, ctx)
+
         # Save checkpoint after each node
         if logs_root:
             ckpt = Checkpoint(
@@ -505,7 +636,30 @@ async def run_pipeline(
 
         # Check if this is an exit node
         if current_node.shape == "Msquare":
-            # Goal gate check (Spec §3.4 + Issue 2 circuit breaker)
+            # Aggregate goal gate check: verify ALL visited goal-gate
+            # nodes before allowing exit (Spec §3.4, §11.4).
+            agg_action, goal_gate_redirect_count, agg_payload = (
+                _check_aggregate_goal_gates(
+                    graph, completed_nodes, node_outcomes, ctx,
+                    goal_gate_redirect_count, start_time,
+                )
+            )
+            if agg_action == "fail":
+                return agg_payload  # type: ignore[return-value]
+            if agg_action == "redirect":
+                current_node = agg_payload  # type: ignore[assignment]
+                continue
+            if agg_action == "no_retry_target":
+                return PipelineResult(
+                    status=PipelineStatus.FAILED,
+                    error="Aggregate goal gate unsatisfied and no retry target",
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    final_outcome=result,
+                    duration_seconds=time.monotonic() - start_time,
+                )
+
+            # Per-exit-node goal gate check (Spec §3.4 + Issue 2 circuit breaker)
             if current_node.goal_gate:
                 action, goal_gate_redirect_count, payload = _check_goal_gate(
                     current_node,
