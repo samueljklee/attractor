@@ -106,7 +106,7 @@ class Client:
         Resolution order:
         1. Explicit ``request.provider`` field
         2. Model catalog lookup (model ID -> provider)
-        3. Fail with InvalidRequestError
+        3. Fail with ConfigurationError
 
         Raises:
             ConfigurationError: If no adapter can be resolved.
