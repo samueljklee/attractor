@@ -435,15 +435,17 @@ async def run_pipeline(
     abort_signal: AbortSignal | None = None,
     logs_root: Path | None = None,
     checkpoint: Checkpoint | None = None,
+    transforms: list[Any] | None = None,
 ) -> PipelineResult:
     """Execute a pipeline graph. Spec §3.2.
 
     This is the core execution loop:
     1. Find the start node (or resume from checkpoint)
-    2. Execute the current node's handler
-    3. Select the next edge using the 5-step algorithm
-    4. Check goal gates at exit nodes
-    5. Repeat until terminal node or limit reached
+    2. Apply graph transforms (Spec §9, §11.11)
+    3. Execute the current node's handler
+    4. Select the next edge using the 5-step algorithm
+    5. Check goal gates at exit nodes
+    6. Repeat until terminal node or limit reached
 
     Args:
         graph: The parsed pipeline graph.
@@ -452,14 +454,25 @@ async def run_pipeline(
         abort_signal: Cooperative cancellation signal.
         logs_root: Directory for logs and artifacts.
         checkpoint: Resume from a saved checkpoint.
+        transforms: Ordered list of GraphTransform implementations
+            to apply between parsing and validation (Spec §9).
+            Each must have an ``apply(graph) -> graph`` method.
 
     Returns:
         PipelineResult with final status, context, and metadata.
     """
     abort = abort_signal or AbortSignal()
     ctx = dict(context or {})
-    ctx["goal"] = graph.goal
     start_time = time.monotonic()
+
+    # Apply graph transforms before validation (Spec §9, §11.11)
+    if transforms:
+        from attractor_pipeline.transforms import apply_transforms
+
+        graph = apply_transforms(graph, transforms)
+
+    # Set goal in context AFTER transforms (transforms may modify graph.goal)
+    ctx["goal"] = graph.goal
 
     # Apply model stylesheet to nodes before execution (Spec §8)
     apply_stylesheet(graph)

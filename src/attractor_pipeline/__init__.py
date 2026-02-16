@@ -17,12 +17,15 @@ from attractor_pipeline.engine.runner import (
 )
 from attractor_pipeline.graph import Edge, Graph, Node, NodeShape
 from attractor_pipeline.handlers import (
+    CallbackInterviewer,
     CodergenBackend,
     CodergenHandler,
     ConditionalHandler,
     ExitHandler,
     HumanHandler,
     Interviewer,
+    QuestionType,
+    QueueInterviewer,
     StartHandler,
     ToolHandler,
     register_default_handlers,
@@ -32,6 +35,11 @@ from attractor_pipeline.stylesheet import (
     Stylesheet,
     apply_stylesheet,
     parse_stylesheet,
+)
+from attractor_pipeline.transforms import (
+    GraphTransform,
+    VariableExpansionTransform,
+    apply_transforms,
 )
 
 __all__ = [
@@ -65,7 +73,14 @@ __all__ = [
     "CodergenBackend",
     "HumanHandler",
     "Interviewer",
+    "CallbackInterviewer",
+    "QueueInterviewer",
+    "QuestionType",
     "register_default_handlers",
+    # Transforms (Spec §9, §11.11)
+    "GraphTransform",
+    "VariableExpansionTransform",
+    "apply_transforms",
     # Conditions
     "evaluate_condition",
 ]
