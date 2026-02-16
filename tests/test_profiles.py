@@ -272,7 +272,11 @@ class TestProfileSessionIntegration:
         await session.submit("test")
 
         req = adapter.requests[0]
-        assert req.system == profile.system_prompt
+        # System prompt is enriched with <environment> block (Spec §6.3),
+        # so the profile prompt is contained within, not an exact match.
+        assert req.system is not None
+        assert profile.system_prompt in req.system
+        assert "<environment>" in req.system
 
     @pytest.mark.asyncio
     async def test_openai_profile_system_prompt_in_request(self):
@@ -288,7 +292,10 @@ class TestProfileSessionIntegration:
         await session.submit("test")
 
         req = adapter.requests[0]
-        assert req.system == profile.system_prompt
+        # Enriched with <environment> block (Spec §6.3)
+        assert req.system is not None
+        assert profile.system_prompt in req.system
+        assert "<environment>" in req.system
 
     @pytest.mark.asyncio
     async def test_profile_tools_used_in_session(self):
@@ -336,8 +343,10 @@ class TestProfileSessionIntegration:
         result = await session.submit("Read the file")
 
         assert "hello world" in result
-        # Verify Gemini profile's system prompt was used
-        assert adapter.requests[0].system == profile.system_prompt
+        # Verify Gemini profile's system prompt was used (enriched with <environment>)
+        assert adapter.requests[0].system is not None
+        assert profile.system_prompt in adapter.requests[0].system
+        assert "<environment>" in adapter.requests[0].system
 
 
 # ================================================================== #

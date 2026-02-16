@@ -9,6 +9,7 @@ Spec reference: coding-agent-loop §2.1-2.10.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -51,6 +52,9 @@ class SessionConfig:
     temperature: float | None = None
     reasoning_effort: str | None = None
     provider_options: dict[str, Any] | None = None
+
+    # Working directory for environment context (None = os.getcwd())
+    working_dir: str | None = None
 
     # Loop detection (None = use defaults: window=4, threshold=3)
     loop_detection_window: int | None = None
@@ -354,11 +358,15 @@ class Session:
         """Build a request from current history and call the LLM."""
         tools = self._tool_registry.definitions()
 
+        # Build enriched system prompt with environment context
+        # and project documentation (Spec §6.3-6.5)
+        system = self._build_enriched_system_prompt()
+
         request = Request(
             model=self._config.model,
             provider=self._config.provider,
             messages=self._history,
-            system=self._config.system_prompt or None,
+            system=system or None,
             tools=tools if tools else None,
             temperature=self._config.temperature,
             reasoning_effort=self._config.reasoning_effort,
@@ -366,6 +374,54 @@ class Session:
         )
 
         return await self._client.complete(request)
+
+    def _build_enriched_system_prompt(self) -> str:
+        """Compose the system prompt with environment context and project docs.
+
+        Layers (in order, per spec §6.1):
+        1. Base system prompt from config (provider-specific instructions)
+        2. ``<environment>`` block with runtime context
+        3. ``<project_instructions>`` from discovered docs
+
+        Spec reference: coding-agent-loop-spec §6.3-6.5.
+        """
+        from attractor_agent.env_context import (
+            build_environment_context,
+            get_git_context,
+        )
+        from attractor_agent.project_docs import discover_project_docs
+
+        working_dir = self._config.working_dir or os.getcwd()
+
+        # Fetch git context once and share between env block and project docs
+        git_info = get_git_context(working_dir)
+        git_root = str(git_info.get("git_root", "")) or None
+
+        parts: list[str] = []
+
+        # 1. Base system prompt (provider-specific instructions)
+        if self._config.system_prompt:
+            parts.append(self._config.system_prompt)
+
+        # 2. Environment context
+        # TODO: wire knowledge_cutoff from model metadata (catalog) when available
+        env_block = build_environment_context(
+            working_dir=working_dir,
+            model=self._config.model,
+            git_info=git_info,
+        )
+        parts.append(env_block)
+
+        # 3. Project documentation (appended)
+        project_docs = discover_project_docs(
+            working_dir=working_dir,
+            provider_id=self._config.provider,
+            git_root=git_root,
+        )
+        if project_docs:
+            parts.append(project_docs)
+
+        return "\n\n".join(parts)
 
     async def _drain_steering(self) -> None:
         """Inject any queued steering messages into history. Spec §2.6."""
