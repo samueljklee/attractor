@@ -158,9 +158,13 @@ async def generate(
                 *(_exec_one(tc) for tc in response.tool_calls),
                 return_exceptions=True,
             )
-            # Convert any unexpected BaseExceptions to error results
+            # Re-raise fatal exceptions; convert others to error results
             final_results: list[tuple[ContentPart, str, bool]] = []
             for i, r in enumerate(exec_results):
+                if isinstance(r, (KeyboardInterrupt, SystemExit)):
+                    raise r
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
                 if isinstance(r, BaseException):
                     tc = response.tool_calls[i]
                     final_results.append(
