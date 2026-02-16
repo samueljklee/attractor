@@ -240,6 +240,69 @@ class HandlerRegistry:
 # ------------------------------------------------------------------ #
 
 
+def _check_goal_gate(
+    node: Node,
+    result: HandlerResult,
+    ctx: dict[str, Any],
+    graph: Graph,
+    redirect_count: int,
+    start_time: float,
+    completed_nodes: list[str],
+) -> tuple[str, int, Node | PipelineResult | None]:
+    """Evaluate a node's goal gate and determine the action to take.
+
+    Returns a 3-tuple of (action, new_redirect_count, payload):
+    - ("pass", count, None): gate satisfied or no gate.
+    - ("redirect", count, Node): gate failed; redirect to this target node.
+    - ("fail", count, PipelineResult): circuit breaker tripped.
+    - ("no_retry_target", count, None): gate failed but no retry target set.
+    """
+    if not node.goal_gate:
+        return ("pass", redirect_count, None)
+
+    gate_vars: dict[str, Any] = {
+        "outcome": result.status.value,
+        **ctx,
+    }
+    if evaluate_condition(node.goal_gate, gate_vars):
+        return ("pass", redirect_count, None)
+
+    # Gate failed
+    redirect_count += 1
+
+    # Circuit breaker (Spec §3.4 + Issue 2 design)
+    if (
+        graph.max_goal_gate_redirects > 0
+        and redirect_count >= graph.max_goal_gate_redirects
+    ):
+        return (
+            "fail",
+            redirect_count,
+            PipelineResult(
+                status=PipelineStatus.FAILED,
+                error=(
+                    f"Goal gate on node '{node.id}' unsatisfied after "
+                    f"{redirect_count} redirects "
+                    f"(limit: {graph.max_goal_gate_redirects})"
+                ),
+                context=ctx,
+                completed_nodes=completed_nodes,
+                final_outcome=result,
+                duration_seconds=time.monotonic() - start_time,
+            ),
+        )
+
+    # Redirect to retry target
+    retry_target = node.retry_target
+    if retry_target:
+        target_node = graph.get_node(retry_target)
+        if target_node:
+            return ("redirect", redirect_count, target_node)
+
+    # No retry target configured -- caller decides behavior
+    return ("no_retry_target", redirect_count, None)
+
+
 async def run_pipeline(
     graph: Graph,
     handlers: HandlerRegistry,
@@ -421,80 +484,34 @@ async def run_pipeline(
         # Check goal gate on ANY node with goal_gate set (Spec §3.4)
         # Exit nodes handle their own goal gate below.
         if current_node.shape != "Msquare" and current_node.goal_gate:
-            gate_vars = {
-                "outcome": result.status.value,
-                **ctx,
-            }
-            if not evaluate_condition(current_node.goal_gate, gate_vars):
-                goal_gate_redirect_count += 1
-
-                # Circuit breaker
-                if (
-                    graph.max_goal_gate_redirects > 0
-                    and goal_gate_redirect_count >= graph.max_goal_gate_redirects
-                ):
-                    return PipelineResult(
-                        status=PipelineStatus.FAILED,
-                        error=(
-                            f"Goal gate on node '{current_node.id}' unsatisfied after "
-                            f"{goal_gate_redirect_count} redirects "
-                            f"(limit: {graph.max_goal_gate_redirects})"
-                        ),
-                        context=ctx,
-                        completed_nodes=completed_nodes,
-                        final_outcome=result,
-                        duration_seconds=time.monotonic() - start_time,
-                    )
-
-                # Redirect to retry target
-                retry_target = current_node.retry_target
-                if retry_target:
-                    target_node = graph.get_node(retry_target)
-                    if target_node:
-                        current_node = target_node
-                        continue
-
-                # No retry target -- fall through to normal edge selection
+            action, goal_gate_redirect_count, payload = _check_goal_gate(
+                current_node, result, ctx, graph,
+                goal_gate_redirect_count, start_time, completed_nodes,
+            )
+            if action == "fail":
+                return payload  # type: ignore[return-value]
+            if action == "redirect":
+                current_node = payload  # type: ignore[assignment]
+                continue
+            # action == "no_retry_target": intentional fall-through to normal
+            # edge selection. The gate failed but no retry_target is configured,
+            # so we continue along the graph edges rather than silently stalling.
 
         # Check if this is an exit node
         if current_node.shape == "Msquare":
             # Goal gate check (Spec §3.4 + Issue 2 circuit breaker)
             if current_node.goal_gate:
-                gate_vars = {
-                    "outcome": result.status.value,
-                    **ctx,
-                }
-                if not evaluate_condition(current_node.goal_gate, gate_vars):
-                    # Goal gate failed
-                    goal_gate_redirect_count += 1
-
-                    # Circuit breaker (Issue 2 design)
-                    if (
-                        graph.max_goal_gate_redirects > 0
-                        and goal_gate_redirect_count >= graph.max_goal_gate_redirects
-                    ):
-                        return PipelineResult(
-                            status=PipelineStatus.FAILED,
-                            error=(
-                                f"Goal gate unsatisfied after "
-                                f"{goal_gate_redirect_count} redirects "
-                                f"(limit: {graph.max_goal_gate_redirects})"
-                            ),
-                            context=ctx,
-                            completed_nodes=completed_nodes,
-                            final_outcome=result,
-                            duration_seconds=time.monotonic() - start_time,
-                        )
-
-                    # Redirect to retry target
-                    retry_target = current_node.retry_target
-                    if retry_target:
-                        target_node = graph.get_node(retry_target)
-                        if target_node:
-                            current_node = target_node
-                            continue
-
-                    # No retry target -- fail
+                action, goal_gate_redirect_count, payload = _check_goal_gate(
+                    current_node, result, ctx, graph,
+                    goal_gate_redirect_count, start_time, completed_nodes,
+                )
+                if action == "fail":
+                    return payload  # type: ignore[return-value]
+                if action == "redirect":
+                    current_node = payload  # type: ignore[assignment]
+                    continue
+                if action == "no_retry_target":
+                    # Exit node with no retry target: pipeline fails
                     return PipelineResult(
                         status=PipelineStatus.FAILED,
                         error="Goal gate unsatisfied and no retry target",
