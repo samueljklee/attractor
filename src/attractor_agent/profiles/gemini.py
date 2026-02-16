@@ -33,6 +33,11 @@ class GeminiProfile:
     def default_model(self) -> str:
         return "gemini-3-flash-preview"
 
+    @property
+    def supports_parallel_tool_calls(self) -> bool:
+        """Gemini supports parallel tool calls. Spec §2.5."""
+        return True
+
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
         """Enhance tool descriptions with examples for Gemini."""
         tools: list[Tool] = []

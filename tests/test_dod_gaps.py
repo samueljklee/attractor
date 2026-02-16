@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -206,11 +207,21 @@ class TestDefaultClient:
 
         saved = client_mod._default_client
         client_mod._default_client = None
+        # Must also clear env vars since get_default_client() now
+        # auto-creates from env (lazy init, Spec §2.2 / Wave 6 #20).
+        env_keys = [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ]
+        saved_env = {k: os.environ.pop(k) for k in env_keys if k in os.environ}
         try:
             with pytest.raises(ConfigurationError, match="No default client"):
                 get_default_client()
         finally:
             client_mod._default_client = saved
+            os.environ.update(saved_env)
 
     def test_set_and_get_default_client(self):
         import attractor_llm.client as client_mod

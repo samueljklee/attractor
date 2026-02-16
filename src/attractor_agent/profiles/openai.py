@@ -33,6 +33,11 @@ class OpenAIProfile:
     def default_model(self) -> str:
         return "gpt-5.2"
 
+    @property
+    def supports_parallel_tool_calls(self) -> bool:
+        """OpenAI supports parallel tool calls. Spec §2.5."""
+        return True
+
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
         """Enhance tool descriptions for OpenAI conventions."""
         tools: list[Tool] = []

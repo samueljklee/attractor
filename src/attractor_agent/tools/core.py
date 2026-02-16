@@ -366,12 +366,23 @@ DEFAULT_SHELL_TIMEOUT = 10
 async def _shell(
     command: str,
     timeout: int = DEFAULT_SHELL_TIMEOUT,
+    timeout_ms: int | None = None,
     working_dir: str | None = None,
 ) -> str:
     """Execute a shell command and return stdout + stderr.
 
     Delegates to the execution environment (local or Docker).
+
+    Args:
+        command: Shell command to execute.
+        timeout: Timeout in seconds (default 10). Kept for backward compat.
+        timeout_ms: Timeout in milliseconds (Spec §4.2). Takes precedence
+            over ``timeout`` when provided; converted to seconds internally.
+        working_dir: Working directory for the command.
     """
+    # timeout_ms takes precedence (Spec §4.2), converted ms→s with ceiling
+    effective_timeout: int = max(1, -(-timeout_ms // 1000)) if timeout_ms is not None else timeout
+
     # Security: check deny-list
     blocked = _check_shell_command(command)
     if blocked:
@@ -387,13 +398,13 @@ async def _shell(
 
     result = await _environment.exec_shell(
         command,
-        timeout=timeout,
+        timeout=effective_timeout,
         working_dir=cwd,
         env=filtered_env,
     )
 
     if result.returncode == -1 and "timed out" in result.stderr:
-        raise RuntimeError(f"Command timed out after {timeout}s: {command}")
+        raise RuntimeError(f"Command timed out after {effective_timeout}s: {command}")
 
     return result.output
 
@@ -416,6 +427,12 @@ SHELL = _make_tool(
                 "type": "integer",
                 "description": "Timeout in seconds. Default: 10",
                 "default": DEFAULT_SHELL_TIMEOUT,
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "description": (
+                    "Timeout in milliseconds (Spec §4.2). Takes precedence over timeout."
+                ),
             },
             "working_dir": {
                 "type": "string",

@@ -29,6 +29,8 @@ class ContentPartKind(StrEnum):
 
     TEXT = "text"
     IMAGE = "image"
+    AUDIO = "audio"
+    DOCUMENT = "document"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     THINKING = "thinking"
@@ -36,17 +38,49 @@ class ContentPartKind(StrEnum):
 
 
 class ImageData(BaseModel):
-    """Image content, either inline bytes or URL. Spec §3.2."""
+    """Image content, either inline bytes or URL. Spec §3.2, §3.3."""
 
     data: bytes | None = None
     url: str | None = None
+    file_path: str | None = None
     media_type: str = "image/png"
 
     @model_validator(mode="after")
     def _check_source(self) -> Self:
-        if self.data is None and self.url is None:
-            raise ValueError("ImageData requires either 'data' or 'url'")
+        if self.data is None and self.url is None and self.file_path is None:
+            raise ValueError("ImageData requires either 'data', 'url', or 'file_path'")
         return self
+
+    @classmethod
+    def from_file(cls, path: str) -> ImageData:
+        """Create ImageData by reading a local file. Spec §3.3.
+
+        Reads the file contents into ``data`` and infers ``media_type``
+        from the file extension.
+
+        Args:
+            path: Path to a local image file.
+
+        Returns:
+            ImageData with ``data`` and ``media_type`` populated.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the file extension is not a recognized image type.
+        """
+        import mimetypes
+        from pathlib import Path as _Path
+
+        p = _Path(path).expanduser().resolve()
+        if not p.exists():
+            raise FileNotFoundError(f"Image file not found: {path}")
+
+        mime, _ = mimetypes.guess_type(str(p))
+        if mime is None or not mime.startswith("image/"):
+            mime = "application/octet-stream"
+
+        raw = p.read_bytes()
+        return cls(data=raw, file_path=str(p), media_type=mime)
 
 
 class ContentPart(BaseModel):
@@ -102,6 +136,10 @@ class ContentPart(BaseModel):
             case ContentPartKind.REDACTED_THINKING:
                 if self.redacted_data is None:
                     raise ValueError("REDACTED_THINKING content part requires 'redacted_data'")
+            case ContentPartKind.AUDIO | ContentPartKind.DOCUMENT:
+                # Future content types — accepted but no adapter support yet.
+                # Adapters should skip or raise on these kinds.
+                pass
         return self
 
     @classmethod

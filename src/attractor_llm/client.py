@@ -204,12 +204,22 @@ def set_default_client(client: Client) -> None:
 def get_default_client() -> Client:
     """Get the module-level default client. Spec §2.2.
 
+    If no default client has been set, attempts to auto-create one
+    from environment variables via ``Client.from_env()``.  If that
+    discovers at least one provider, it becomes the default.
+
     Raises:
-        ConfigurationError: If no default client has been set.
+        ConfigurationError: If no client could be configured (no env vars).
     """
+    global _default_client  # noqa: PLW0603
     if _default_client is None:
-        raise ConfigurationError(
-            "No default client configured. "
-            "Call set_default_client() or Client.from_env() first."
-        )
+        candidate = Client.from_env()
+        if candidate._adapters:
+            _default_client = candidate
+        else:
+            raise ConfigurationError(
+                "No default client configured and no provider API keys "
+                "found in environment variables. Set OPENAI_API_KEY, "
+                "ANTHROPIC_API_KEY, or GEMINI_API_KEY."
+            )
     return _default_client

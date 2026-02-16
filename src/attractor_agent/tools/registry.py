@@ -10,10 +10,67 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 from attractor_agent.events import EventEmitter, EventKind, SessionEvent
 from attractor_agent.truncation import TruncationLimits, truncate_output
 from attractor_llm.types import ContentPart, ContentPartKind, Tool
+
+# ------------------------------------------------------------------ #
+# Lightweight argument schema validation  (Spec §5.5)
+# ------------------------------------------------------------------ #
+
+# Maps JSON Schema type names to Python types for top-level checking.
+_JSON_TYPE_MAP: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "array": (list,),
+    "object": (dict,),
+}
+
+
+def validate_tool_arguments(
+    arguments: dict[str, Any],
+    schema: dict[str, Any],
+) -> str | None:
+    """Validate *arguments* against a JSON-Schema-style *schema*.
+
+    Performs two top-level checks:
+    1. All ``required`` fields are present.
+    2. Provided values match the declared ``type`` (top-level only).
+
+    Returns ``None`` when valid, or an error message string when not.
+    """
+    properties: dict[str, Any] = schema.get("properties", {})
+    required: list[str] = schema.get("required", [])
+
+    # 1. Required fields
+    missing = [f for f in required if f not in arguments]
+    if missing:
+        return f"Missing required argument(s): {', '.join(missing)}"
+
+    # 2. Type checks on provided values
+    for key, value in arguments.items():
+        prop_schema = properties.get(key)
+        if prop_schema is None:
+            continue  # extra keys are tolerated
+        expected_type_name = prop_schema.get("type")
+        if expected_type_name is None:
+            continue
+        expected_types = _JSON_TYPE_MAP.get(expected_type_name)
+        if expected_types is None:
+            continue
+        # JSON booleans are distinct from ints in Python, but isinstance(True, int)
+        # is True.  Exclude bool when checking for int/number.
+        if expected_type_name in ("integer", "number") and isinstance(value, bool):
+            return f"Argument '{key}' has type bool, expected {expected_type_name}"
+        if not isinstance(value, expected_types):
+            actual = type(value).__name__
+            return f"Argument '{key}' has type {actual}, expected {expected_type_name}"
+
+    return None
 
 
 class ToolRegistry:
@@ -35,11 +92,14 @@ class ToolRegistry:
         event_emitter: EventEmitter | None = None,
         tool_output_limits: dict[str, int] | None = None,
         tool_line_limits: dict[str, int] | None = None,
+        *,
+        supports_parallel_tool_calls: bool = True,
     ) -> None:
         self._tools: dict[str, Tool] = {}
         self._emitter = event_emitter
         self._output_limits = tool_output_limits
         self._line_limits = tool_line_limits
+        self.supports_parallel_tool_calls = supports_parallel_tool_calls
 
     def register(self, tool: Tool) -> None:
         """Register a tool. Overwrites if name already exists."""
@@ -114,26 +174,33 @@ class ToolRegistry:
             raw_output_str = output
             is_error = True
         else:
-            # Execute
-            try:
-                raw_output = await tool.execute(**arguments)
-                is_error = False
-
-                # Truncate (raw preserved for event; truncated goes to LLM)
-                raw_output_str = str(raw_output)
-                limits = TruncationLimits.for_tool(
-                    tool_name, self._output_limits, self._line_limits
-                )
-                output, was_truncated = truncate_output(raw_output_str, limits)
-                if was_truncated:
-                    output += "\n[output was truncated]"
-
-            except Exception as exc:  # noqa: BLE001
-                # Send only the exception message to the LLM, not the full
-                # traceback (which leaks internal paths and implementation details).
-                output = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
+            # Validate arguments against tool schema (Spec §5.5)
+            validation_error = validate_tool_arguments(arguments, tool.parameters)
+            if validation_error:
+                output = f"Error: Invalid arguments for '{tool_name}': {validation_error}"
                 raw_output_str = output
                 is_error = True
+            else:
+                # Execute
+                try:
+                    raw_output = await tool.execute(**arguments)
+                    is_error = False
+
+                    # Truncate (raw preserved for event; truncated goes to LLM)
+                    raw_output_str = str(raw_output)
+                    limits = TruncationLimits.for_tool(
+                        tool_name, self._output_limits, self._line_limits
+                    )
+                    output, was_truncated = truncate_output(raw_output_str, limits)
+                    if was_truncated:
+                        output += "\n[output was truncated]"
+
+                except Exception as exc:  # noqa: BLE001
+                    # Send only the exception message to the LLM, not the full
+                    # traceback (which leaks internal paths and implementation details).
+                    output = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
+                    raw_output_str = output
+                    is_error = True
 
         # Emit end event (carries full untruncated output per Spec §2.9, §5.1)
         if self._emitter:
@@ -157,9 +224,12 @@ class ToolRegistry:
         )
 
     async def execute_tool_calls(self, tool_calls: list[ContentPart]) -> list[ContentPart]:
-        """Execute multiple tool calls concurrently. Spec §5.7.
+        """Execute multiple tool calls, optionally in parallel. Spec §5.7.
 
-        Tool calls are executed in parallel via asyncio.gather().
+        When ``supports_parallel_tool_calls`` is True (default), multiple
+        tool calls are executed concurrently via asyncio.gather().
+        When False, they are executed sequentially.
+
         Results are returned in the same order as the input tool calls.
         Partial failures are handled: successful tools return normally,
         failed tools return is_error=True results.
@@ -170,8 +240,8 @@ class ToolRegistry:
         Returns:
             List of ContentParts with kind=TOOL_RESULT, in the same order.
         """
-        if len(tool_calls) <= 1:
-            # Single tool call: sequential execution, no filesystem race risk.
+        if len(tool_calls) <= 1 or not self.supports_parallel_tool_calls:
+            # Sequential execution: single call, or parallel not supported.
             return [await self.execute_tool_call(tc) for tc in tool_calls]
 
         # Multiple tool calls: execute concurrently

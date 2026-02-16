@@ -36,6 +36,11 @@ class ProviderProfile(Protocol):
         """Default model ID for this provider."""
         ...
 
+    @property
+    def supports_parallel_tool_calls(self) -> bool:
+        """Whether the provider supports parallel tool execution. Spec §2.5."""
+        ...
+
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
         """Customize tool descriptions for this provider.
 
@@ -73,6 +78,11 @@ class BaseProfile:
     @property
     def default_model(self) -> str:
         return "claude-sonnet-4-5"
+
+    @property
+    def supports_parallel_tool_calls(self) -> bool:
+        """Base profile defaults to sequential execution."""
+        return False
 
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
         """Return base tools unmodified."""
