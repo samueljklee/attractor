@@ -38,6 +38,18 @@ class SessionState(StrEnum):
 
 
 @dataclass
+class SteeringTurn:
+    """A steering message in conversation history. Spec §2.4, §2.6, §9.6.
+
+    Stored distinctly from plain Message to preserve the steering/meta intent
+    in history. When building the LLM request, converted to Message(role=USER).
+    """
+
+    content: str
+    timestamp: float | None = None
+
+
+@dataclass
 class SessionConfig:
     """Configuration for an agent session. Spec §2.1-2.2.
 
@@ -59,6 +71,10 @@ class SessionConfig:
     # Loop detection (None = use defaults: window=4, threshold=3)
     loop_detection_window: int | None = None
     loop_detection_threshold: int | None = None
+
+    # Per-tool truncation overrides (Spec §2.2, §5.2, §5.3)
+    tool_output_limits: dict[str, int] | None = None
+    tool_line_limits: dict[str, int] | None = None
 
     # Execution environment: "local" (default) or "docker"
     environment: str = "local"
@@ -122,7 +138,7 @@ class Session:
         self._config = config or SessionConfig()
         self._abort = abort_signal or AbortSignal()
         self._state = SessionState.IDLE
-        self._history: list[Message] = []
+        self._history: list[Message | SteeringTurn] = []
         self._total_usage = Usage()
         self._turn_count = 0
 
@@ -130,7 +146,11 @@ class Session:
         self._emitter = EventEmitter()
 
         # Tools
-        self._tool_registry = ToolRegistry(event_emitter=self._emitter)
+        self._tool_registry = ToolRegistry(
+            event_emitter=self._emitter,
+            tool_output_limits=self._config.tool_output_limits,
+            tool_line_limits=self._config.tool_line_limits,
+        )
         if tools:
             self._tool_registry.register_many(list(tools))
 
@@ -152,7 +172,7 @@ class Session:
         return self._state
 
     @property
-    def history(self) -> list[Message]:
+    def history(self) -> list[Message | SteeringTurn]:
         return list(self._history)
 
     @property
@@ -312,6 +332,8 @@ class Session:
                 # Loop detection BEFORE execution (avoid wasted work)
                 for tc in tool_calls:
                     if self._loop_detector.record(tc.name or "", tc.arguments):
+                        warning = f"Loop detected: {tc.name} called repeatedly"
+                        self._history.append(SteeringTurn(content=warning))
                         await self._emitter.emit(
                             SessionEvent(
                                 kind=EventKind.LOOP_DETECTED,
@@ -354,6 +376,21 @@ class Session:
 
             return text
 
+    def _build_messages(self) -> list[Message]:
+        """Convert history entries to Message list for the LLM.
+
+        SteeringTurn entries are converted to Message(role=USER) with a
+        [STEERING] prefix. The LLM sees them as user messages but the
+        history preserves the distinction.
+        """
+        messages: list[Message] = []
+        for entry in self._history:
+            if isinstance(entry, SteeringTurn):
+                messages.append(Message.user(f"[STEERING] {entry.content}"))
+            else:
+                messages.append(entry)
+        return messages
+
     async def _call_llm(self) -> Response:
         """Build a request from current history and call the LLM."""
         tools = self._tool_registry.definitions()
@@ -365,7 +402,7 @@ class Session:
         request = Request(
             model=self._config.model,
             provider=self._config.provider,
-            messages=self._history,
+            messages=self._build_messages(),
             system=system or None,
             tools=tools if tools else None,
             temperature=self._config.temperature,
@@ -427,7 +464,7 @@ class Session:
         """Inject any queued steering messages into history. Spec §2.6."""
         while self._steer_queue:
             msg = self._steer_queue.pop(0)
-            self._history.append(Message.user(f"[STEERING] {msg}"))
+            self._history.append(SteeringTurn(content=msg))
             await self._emitter.emit(
                 SessionEvent(
                     kind=EventKind.STEER_INJECTED,

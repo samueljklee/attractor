@@ -23,17 +23,40 @@ class TruncationLimits:
 
     # Common presets per tool type
     @classmethod
-    def for_tool(cls, tool_name: str) -> TruncationLimits:
-        """Get truncation limits for a specific tool."""
+    def for_tool(
+        cls,
+        tool_name: str,
+        output_limits: dict[str, int] | None = None,
+        line_limits: dict[str, int] | None = None,
+    ) -> TruncationLimits:
+        """Get truncation limits for a specific tool.
+
+        Config overrides (output_limits, line_limits) take precedence
+        over built-in presets.  Spec §5.2, §5.3.
+        """
         presets: dict[str, TruncationLimits] = {
             "read_file": cls(max_chars=50_000, max_lines=1000),
-            "shell": cls(max_chars=30_000, max_lines=500),
-            "grep": cls(max_chars=20_000, max_lines=300),
-            "glob": cls(max_chars=10_000, max_lines=200),
+            "shell": cls(max_chars=30_000, max_lines=256),
+            "grep": cls(max_chars=20_000, max_lines=200),
+            "glob": cls(max_chars=10_000, max_lines=500),
             "write_file": cls(max_chars=5_000, max_lines=50),
             "edit_file": cls(max_chars=5_000, max_lines=50),
         }
-        return presets.get(tool_name, cls())
+        preset = presets.get(tool_name, cls())
+
+        # Apply per-tool config overrides
+        max_chars = (
+            output_limits[tool_name]
+            if output_limits and tool_name in output_limits
+            else preset.max_chars
+        )
+        max_lines = (
+            line_limits[tool_name] if line_limits and tool_name in line_limits else preset.max_lines
+        )
+
+        if max_chars != preset.max_chars or max_lines != preset.max_lines:
+            return cls(max_chars=max_chars, max_lines=max_lines, head_ratio=preset.head_ratio)
+        return preset
 
 
 def truncate_output(

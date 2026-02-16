@@ -30,9 +30,16 @@ class ToolRegistry:
     Spec reference: coding-agent-loop §3.8.
     """
 
-    def __init__(self, event_emitter: EventEmitter | None = None) -> None:
+    def __init__(
+        self,
+        event_emitter: EventEmitter | None = None,
+        tool_output_limits: dict[str, int] | None = None,
+        tool_line_limits: dict[str, int] | None = None,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
         self._emitter = event_emitter
+        self._output_limits = tool_output_limits
+        self._line_limits = tool_line_limits
 
     def register(self, tool: Tool) -> None:
         """Register a tool. Overwrites if name already exists."""
@@ -97,11 +104,14 @@ class ToolRegistry:
 
         # Lookup
         tool = self.get(tool_name)
+        raw_output_str = ""
         if tool is None:
             output = f"Error: Unknown tool '{tool_name}'"
+            raw_output_str = output
             is_error = True
         elif tool.execute is None:
             output = f"Error: Tool '{tool_name}' has no execute handler"
+            raw_output_str = output
             is_error = True
         else:
             # Execute
@@ -109,9 +119,12 @@ class ToolRegistry:
                 raw_output = await tool.execute(**arguments)
                 is_error = False
 
-                # Truncate
-                limits = TruncationLimits.for_tool(tool_name)
-                output, was_truncated = truncate_output(str(raw_output), limits)
+                # Truncate (raw preserved for event; truncated goes to LLM)
+                raw_output_str = str(raw_output)
+                limits = TruncationLimits.for_tool(
+                    tool_name, self._output_limits, self._line_limits
+                )
+                output, was_truncated = truncate_output(raw_output_str, limits)
                 if was_truncated:
                     output += "\n[output was truncated]"
 
@@ -119,9 +132,10 @@ class ToolRegistry:
                 # Send only the exception message to the LLM, not the full
                 # traceback (which leaks internal paths and implementation details).
                 output = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
+                raw_output_str = output
                 is_error = True
 
-        # Emit end event
+        # Emit end event (carries full untruncated output per Spec §2.9, §5.1)
         if self._emitter:
             await self._emitter.emit(
                 SessionEvent(
@@ -130,7 +144,7 @@ class ToolRegistry:
                         "tool": tool_name,
                         "call_id": tool_call_id,
                         "is_error": is_error,
-                        "output_length": len(output),
+                        "output": raw_output_str,
                     },
                 )
             )
