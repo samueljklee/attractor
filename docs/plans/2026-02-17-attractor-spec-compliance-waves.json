@@ -4,9 +4,11 @@
     "generated": "2026-02-17",
     "source_audit": "3-spec attractor compliance audit (unified-llm-spec, coding-agent-loop-spec, attractor-spec)",
     "total_fail": 25,
+    "total_fail_enumerated": 24,
+    "total_fail_note": "Enumerated F: items across all waves sum to 24 (wave9=1, wave10=1, wave13=1, wave16a=3, wave16b=18). Metadata total_fail=25 inherited from original audit. Verify whether one FAIL was miscategorized as PARTIAL in the source audit.",
     "total_partial": 34,
     "total_items": 59,
-    "wave_range": "wave9 through wave16 (continues from existing waves 1-8)",
+    "wave_range": "wave9 through wave16b (continues from existing waves 1-8)",
     "recipe": "recipes/wave-implementation.yaml"
   },
   "waves": [
@@ -44,7 +46,8 @@
       "priority": 2,
       "rationale": "All §8.4 items plus the abort mechanism that spans LLM SDK and agent layer. P12 depends on the abort primitive from F-abort. Must land before wave13 (graceful shutdown).",
       "dependencies": [],
-      "blocks": ["wave13-events-lifecycle"]
+      "blocks": ["wave13-events-lifecycle"],
+      "notes": "NOTE: If implementation proves too complex for a single PR, split into wave10a (StreamResult + events + TimeoutConfig) and wave10b (abort/cancellation end-to-end)."
     },
     {
       "name": "wave11-provider-catalog",
@@ -112,22 +115,49 @@
       ],
       "estimated_effort": "medium",
       "priority": 7,
-      "rationale": "All §11.5-11.8 pipeline execution items. P31+P32 are retry policy, P33 is context typing, P34 is interviewer API. Can run after wave14 since handler signature changes may affect Context usage."
+      "rationale": "All §11.5-11.8 pipeline execution items. P31+P32 are retry policy, P33 is context typing, P34 is interviewer API. Can run after wave14 since handler signature changes may affect Context usage.",
+      "dependencies": ["wave14-pipeline-graph-validation"]
     },
     {
-      "name": "wave16-test-coverage",
-      "description": "Comprehensive test suite gaps: multi-turn caching validation, cross-provider parity matrix (45 cells), integration smoke test script, and 18 missing live test scenarios (image input, Gemini tools, streaming+tools, reasoning tokens, rate limits). Should run LAST so tests validate all prior wave implementations.",
+      "name": "wave16a-test-coverage-mock",
+      "description": "Mock and unit test coverage: multi-turn caching validation, cross-provider parity matrix framework (45 cells), and integration smoke test script. These tests do not require live API keys.",
       "items": [
         "F: Multi-turn caching validation test (§8.6)",
         "F: Cross-provider parity matrix tests x45 cells (§8.9)",
-        "F: Integration smoke test script (§8.10)",
-        "F: 18 missing live test scenarios: image input (6), Gemini tool tests (3), streaming+tools (3), reasoning tokens (3), rate limit tests (3)"
+        "F: Integration smoke test script (§8.10)"
+      ],
+      "estimated_effort": "medium",
+      "priority": 8,
+      "rationale": "Mock/unit test FAIL items that can be implemented and iterated quickly without API keys. Parity matrix framework should be in place before live tests are added.",
+      "dependencies": ["wave10-streaming-generation", "wave11-provider-catalog"]
+    },
+    {
+      "name": "wave16b-test-coverage-live",
+      "description": "Live API test scenarios requiring real provider credentials. Covers image input (URL and base64 across 3 providers), Gemini-specific tool calling, streaming with tool calls, reasoning token reporting, and rate limit handling.",
+      "items": [
+        "F: Image input URL test - OpenAI",
+        "F: Image input URL test - Anthropic",
+        "F: Image input URL test - Gemini",
+        "F: Image input base64 test - OpenAI",
+        "F: Image input base64 test - Anthropic",
+        "F: Image input base64 test - Gemini",
+        "F: Gemini single tool call test",
+        "F: Gemini parallel tool calls test",
+        "F: Gemini multi-step tool loop test",
+        "F: Streaming with tool calls - OpenAI",
+        "F: Streaming with tool calls - Anthropic",
+        "F: Streaming with tool calls - Gemini",
+        "F: Reasoning token reporting - OpenAI",
+        "F: Reasoning token reporting - Anthropic",
+        "F: Reasoning token reporting - Gemini",
+        "F: Rate limit handling (429) - OpenAI",
+        "F: Rate limit handling (429) - Anthropic",
+        "F: Rate limit handling (429) - Gemini"
       ],
       "estimated_effort": "large",
-      "priority": 8,
-      "rationale": "All test-only FAIL items. Deliberately last because: (1) tests should validate implementations from waves 9-15, (2) parity matrix tests need provider/streaming changes from waves 10-11, (3) live test scenarios need abort/structured-output from wave10. May be split into sub-waves if too large for one PR.",
-      "dependencies": ["wave10-streaming-generation", "wave11-provider-catalog"],
-      "notes": "Consider splitting: wave16a for unit/mock tests (caching, parity matrix, smoke) and wave16b for live API tests (18 scenarios) which require API keys and are slower to iterate."
+      "priority": 9,
+      "rationale": "All 18 live API test scenarios that require provider credentials and are slower to iterate. Depends on wave16a parity matrix framework and all prior implementation waves. Should run last.",
+      "dependencies": ["wave16a-test-coverage-mock", "wave13-events-lifecycle"]
     }
   ],
   "execution_plan": {
@@ -146,12 +176,12 @@
       },
       {
         "track": "D - Tests (after A+B complete)",
-        "sequence": ["wave16-test-coverage"]
+        "sequence": ["wave16a-test-coverage-mock", "wave16b-test-coverage-live"]
       }
     ],
-    "critical_path": "wave9 -> wave10 -> wave13 -> wave16",
-    "estimated_total_prs": 8,
-    "estimated_calendar_time": "Wave9 (1 day) + Wave10 (3 days) + Waves 11-15 (2 days each, some parallel) + Wave16 (3 days) = ~2-3 weeks with parallelism"
+    "critical_path": "wave9 -> wave10 -> wave13 -> wave16a -> wave16b",
+    "estimated_total_prs": 9,
+    "estimated_calendar_time": "Wave9 (1 day) + Wave10 (3 days) + Waves 11-15 (2 days each, some parallel) + Wave16a (1 day) + Wave16b (2 days) = ~2-3 weeks with parallelism"
   },
   "recipe_invocations": [
     {
@@ -161,6 +191,34 @@
     {
       "wave": "wave10-streaming-generation",
       "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave10-streaming-generation\",\"wave_items_description\":\"P4: stream() returns AsyncIterator[str] not StreamResult (§8.4) -- stream() should return StreamResult wrapping the iterator with metadata. P5: Missing TEXT_START/TEXT_END/REASONING_START/REASONING_END events (§8.4) -- streaming events enum lacks these four granular event types. P6: generate_object() no native structured output (§8.4) -- generate_object uses prompt-based JSON extraction, should use provider native structured output (response_format/tool-based). P7: Single flat HTTP timeout, no TimeoutConfig (§8.4) -- single timeout value instead of TimeoutConfig with connect/read/total fields. F: Abort/cancellation on generate()/stream() (§8.4) -- no abort signal plumbed through generate()/stream() for cooperative cancellation. P12: Abort cooperative-only, no LLM stream cancel/process kill (§9.1) -- abort only sets a flag, does not cancel in-flight HTTP streams or kill subprocesses.\"}'"
+    },
+    {
+      "wave": "wave11-provider-catalog",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave11-provider-catalog\",\"wave_items_description\":\"P1: No default_provider on Client (§8.1) -- Client class has no default_provider attribute for selecting a default provider when none specified. P2: Catalog missing get_latest_model, cost fields, aliases (§8.1) -- model catalog lacks get_latest_model() method, cost/pricing fields, and model aliases. P3: Audio/document content parts silently degrade in adapters (§8.3) -- multimodal content parts containing audio or documents are silently dropped by provider adapters instead of raising errors or degrading gracefully. P15: Gemini profile missing provider-specific tools (§9.2) -- Gemini provider profile does not include Gemini-specific tools like code_execution.\"}'"
+    },
+    {
+      "wave": "wave12-tool-agent-session",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave12-tool-agent-session\",\"wave_items_description\":\"P9: No schema validation of tool args in generate.py (§8.7) -- tool arguments are passed to handlers without JSON schema validation. P10: StepResult has minimal fields (§8.7) -- StepResult lacks fields like tool_call_id, duration, token counts per spec. P11: Session constructor does not accept ProviderProfile/ExecutionEnvironment (§9.1) -- Session init only takes basic params, not the full ProviderProfile or ExecutionEnvironment. P13: Loop detection exits instead of warning+continue (§9.1) -- agent loop detection raises an error and exits instead of warning and continuing. P19: No public API for reasoning_effort mid-session (§9.7) -- no way to change reasoning_effort parameter during an active session.\"}'"
+    },
+    {
+      "wave": "wave13-events-lifecycle",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave13-events-lifecycle\",\"wave_items_description\":\"P22: Missing event types + 4 event names diverge (§9.10) -- event enum is missing several event types and 4 existing event names do not match spec naming. F: Auth errors do not transition to CLOSED (§9.11) -- authentication failures do not trigger a session state transition to CLOSED as required by the lifecycle spec. P23: Graceful shutdown 4/8 steps (§9.11) -- graceful shutdown implementation only covers 4 of the 8 required shutdown steps.\"}'"
+    },
+    {
+      "wave": "wave14-pipeline-graph-validation",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave14-pipeline-graph-validation\",\"wave_items_description\":\"P24: No typed label field on Graph (§11.1) -- Graph model lacks a typed label field for node labeling. P25: Multi-class stylesheet matching missing (§11.1) -- stylesheet engine does not support multi-class selector matching. P28: Reachability rule incomplete (§11.2) -- graph validation reachability rule does not cover all required cases. P29: Handler-shape mapping (§11.3) -- handler-to-shape mapping is incomplete or incorrect. P30: Handler signature 5 params vs 4 (§11.3) -- handler functions take 5 parameters but spec requires 4.\"}'"
+    },
+    {
+      "wave": "wave15-pipeline-execution-types",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave15-pipeline-execution-types\",\"wave_items_description\":\"P31: Single hardcoded RetryPolicy, no named presets (§11.5) -- only one hardcoded retry policy exists, spec requires named presets (aggressive, conservative, etc). P32: Jitter not confirmable at pipeline layer (§11.5) -- jitter configuration cannot be confirmed/inspected at the pipeline execution layer. P33: Context is plain dict not Context class (§11.7) -- pipeline context is a plain dict instead of a typed Context class with methods. P34: Interviewer flat str API vs Question/Answer models (§11.8) -- interviewer component uses flat string API instead of typed Question/Answer model objects.\"}'"
+    },
+    {
+      "wave": "wave16a-test-coverage-mock",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave16a-test-coverage-mock\",\"wave_items_description\":\"F: Multi-turn caching validation test (§8.6) -- no test validates that multi-turn conversation caching works correctly across providers. F: Cross-provider parity matrix tests x45 cells (§8.9) -- no systematic parity test matrix covering all 45 provider/feature cells. F: Integration smoke test script (§8.10) -- no smoke test script exists for quick integration validation.\"}'"
+    },
+    {
+      "wave": "wave16b-test-coverage-live",
+      "command": "amplifier tool invoke recipes operation=execute recipe_path=recipes/wave-implementation.yaml context='{\"wave_name\":\"wave16b-test-coverage-live\",\"wave_items_description\":\"F: Image input URL test - OpenAI -- test sending image via URL to OpenAI. F: Image input URL test - Anthropic -- test sending image via URL to Anthropic. F: Image input URL test - Gemini -- test sending image via URL to Gemini. F: Image input base64 test - OpenAI -- test sending base64 image to OpenAI. F: Image input base64 test - Anthropic -- test sending base64 image to Anthropic. F: Image input base64 test - Gemini -- test sending base64 image to Gemini. F: Gemini single tool call test -- test single tool call with Gemini provider. F: Gemini parallel tool calls test -- test parallel tool calls with Gemini. F: Gemini multi-step tool loop test -- test multi-step tool loop with Gemini. F: Streaming with tool calls - OpenAI -- test streaming output with tool calls on OpenAI. F: Streaming with tool calls - Anthropic -- test streaming output with tool calls on Anthropic. F: Streaming with tool calls - Gemini -- test streaming output with tool calls on Gemini. F: Reasoning token reporting - OpenAI -- test reasoning token usage is reported for OpenAI. F: Reasoning token reporting - Anthropic -- test reasoning token usage is reported for Anthropic. F: Reasoning token reporting - Gemini -- test reasoning token usage is reported for Gemini. F: Rate limit handling (429) - OpenAI -- test proper handling of 429 rate limit from OpenAI. F: Rate limit handling (429) - Anthropic -- test proper handling of 429 rate limit from Anthropic. F: Rate limit handling (429) - Gemini -- test proper handling of 429 rate limit from Gemini.\"}'"
     }
   ]
 }

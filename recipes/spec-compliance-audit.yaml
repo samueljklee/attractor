@@ -93,6 +93,7 @@ stages:
       # -----------------------------------------------------------------------
       - id: "fetch-specs"
         type: "bash"
+        # WARNING: Concurrent runs will clobber each other. Use unique spec_files_dir per run.
         command: |
           set -euo pipefail
 
@@ -183,6 +184,12 @@ stages:
           Output a structured codebase map organized by package. Be thorough
           -- cover every file under src/. This map will be used by auditors
           to locate implementations.
+
+          Output format (Markdown):
+          ## <package_name>
+          - `<module.py>` — <one-line purpose>
+            - `ClassName` — <purpose>
+            - `function_name()` — <purpose>
         output: "codebase_map"
         timeout: 600
         retry:
@@ -237,6 +244,10 @@ stages:
             **Evidence**: <file paths and line references supporting verdict>
             **Gap** (if PARTIAL/FAIL): <what is missing or wrong>
 
+          TOKEN BUDGET: Limit your report to the VERDICT, EVIDENCE (max 2
+          lines), and GAP description for each item. Do not include full code
+          snippets.
+
           IMPORTANT: Your output must cover every single item ID from the
           unified-llm-spec.md checklist. At the end, state:
           "Items audited: X of Y total unified-llm items"
@@ -289,6 +300,10 @@ stages:
             **Verdict**: PASS | PARTIAL | FAIL
             **Evidence**: <file paths and line references supporting verdict>
             **Gap** (if PARTIAL/FAIL): <what is missing or wrong>
+
+          TOKEN BUDGET: Limit your report to the VERDICT, EVIDENCE (max 2
+          lines), and GAP description for each item. Do not include full code
+          snippets.
 
           IMPORTANT: Your output must cover every single item ID from the
           coding-agent-loop-spec.md checklist. At the end, state:
@@ -344,6 +359,10 @@ stages:
             **Evidence**: <file paths and line references supporting verdict>
             **Gap** (if PARTIAL/FAIL): <what is missing or wrong>
 
+          TOKEN BUDGET: Limit your report to the VERDICT, EVIDENCE (max 2
+          lines), and GAP description for each item. Do not include full code
+          snippets.
+
           IMPORTANT: Your output must cover every single item ID from the
           attractor-spec.md checklist. At the end, state:
           "Items audited: X of Y total attractor-pipeline items"
@@ -361,6 +380,11 @@ stages:
       - id: "synthesize-report"
         agent: "foundation:zen-architect"
         mode: "ANALYZE"
+        provider_preferences:
+          - provider: google
+            model: gemini-2.5-pro
+          - provider: anthropic
+            model: claude-sonnet-4-5-*
         depends_on:
           - "audit-unified-llm"
           - "audit-coding-agent"
@@ -368,6 +392,10 @@ stages:
         prompt: |
           You are a technical program manager. Merge the three spec-compliance
           audit results into a single, unified gap report.
+
+          NOTE: If any audit section below is empty or contains an error message,
+          flag it as a coverage gap in the report and proceed with available data.
+          Do not fail the synthesis because one audit agent failed.
 
           === ORIGINAL DoD CHECKLIST (ground truth -- the authoritative list) ===
           {{dod_items}}
@@ -541,6 +569,11 @@ stages:
       - id: "create-wave-plan"
         agent: "foundation:zen-architect"
         mode: "ARCHITECT"
+        provider_preferences:
+          - provider: anthropic
+            model: claude-sonnet-4-5-*
+          - provider: openai
+            model: o3
         prompt: |
           Based on the validated gap report and corrected findings:
 
@@ -621,6 +654,7 @@ stages:
       # -----------------------------------------------------------------------
       - id: "cleanup-specs"
         type: "bash"
+        on_error: "continue"
         command: |
           set -euo pipefail
           rm -f "{{spec_files_dir}}/unified-llm-spec.md" \

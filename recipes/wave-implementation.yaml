@@ -106,7 +106,19 @@ stages:
   - name: "implement-and-test"
     steps:
       # -----------------------------------------------------------------------
-      # Step 0: Validate that spec files exist
+      # Step 0a: Validate required inputs
+      # -----------------------------------------------------------------------
+      - id: "validate-inputs"
+        type: "bash"
+        command: |
+          set -euo pipefail
+          if [ -z "{{wave_name}}" ]; then echo "ERROR: wave_name is required" >&2; exit 1; fi
+          if [ -z "{{wave_items_description}}" ]; then echo "ERROR: wave_items_description is required" >&2; exit 1; fi
+          echo "Inputs validated: wave_name={{wave_name}}"
+        timeout: 10
+
+      # -----------------------------------------------------------------------
+      # Step 0b: Validate that spec files exist
       # -----------------------------------------------------------------------
       - id: "validate-spec-files"
         type: "bash"
@@ -322,8 +334,8 @@ stages:
               {{diff_output}}
 
               TEST RESULTS:
-              Mock: {{mock_test_results}}
-              Live: {{live_test_results}}
+              Mock (last 5 lines only): {{mock_test_results}}
+              Live (last 10 lines only): {{live_test_results}}
 
               PREVIOUS ITERATION FIX RESULTS (empty on first pass):
               {{fix_results}}
@@ -342,6 +354,7 @@ stages:
               Be strict about spec compliance. Cite spec text when flagging gaps.
             output: "correctness_review"
             timeout: 600
+            on_error: "continue"
             retry:
               max_attempts: 2
               backoff: "exponential"
@@ -385,6 +398,7 @@ stages:
               Do NOT flag things that are just style preferences.
             output: "simplification_review"
             timeout: 600
+            on_error: "continue"
             retry:
               max_attempts: 2
               backoff: "exponential"
@@ -396,8 +410,16 @@ stages:
           - id: "synthesize-reviews"
             agent: "foundation:zen-architect"
             mode: "ANALYZE"
+            provider_preferences:
+              - provider: anthropic
+                model: claude-sonnet-4-5-*
+              - provider: openai
+                model: o3
             prompt: |
               Merge these two review reports into a single verdict.
+
+              NOTE: If any review section below is empty or contains an error,
+              proceed with available data.
 
               === CORRECTNESS REVIEW ===
               {{correctness_review}}
