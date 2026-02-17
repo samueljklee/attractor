@@ -36,7 +36,7 @@ def make_test_graph() -> Graph:
         name="TestPipeline",
         goal="Build a widget",
         nodes={
-            "start": Node(id="start", shape="ellipse"),
+            "start": Node(id="start", shape="Mdiamond"),
             "plan": Node(id="plan", shape="box", prompt="Plan: $goal"),
             "implement": Node(id="implement", shape="box", prompt="Implement: $goal"),
             "done": Node(id="done", shape="Msquare"),

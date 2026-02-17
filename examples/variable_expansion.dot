@@ -13,7 +13,7 @@
 digraph VariableExpansion {
     graph [goal="Build a Python utility"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     // Stage 1: Define the spec. Output becomes available as $codergen.define_spec.output
     define_spec [

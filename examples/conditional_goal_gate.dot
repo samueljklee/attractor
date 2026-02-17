@@ -11,7 +11,7 @@
 digraph ConditionalGoalGate {
     graph [goal="Write a thread-safe LRU cache in Python", max_goal_gate_redirects="3"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     plan [
         shape=box,

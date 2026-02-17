@@ -5,7 +5,7 @@
 digraph ResearchThenBuild {
     graph [goal="Build a CLI tool that converts CSV files to JSON"]
 
-    start [shape=ellipse, label="Start"]
+    start [shape=Mdiamond, label="Start"]
 
     research [
         shape=box,

@@ -26,7 +26,7 @@ from attractor_server.sse import format_sse_event
 SIMPLE_DOT = """
 digraph Simple {
     graph [goal="Test pipeline"]
-    start [shape=ellipse]
+    start [shape=Mdiamond]
     task [shape=box, prompt="Hello"]
     done [shape=Msquare]
     start -> task -> done
@@ -323,7 +323,7 @@ class TestPipelineManager:
         long_dot = """
         digraph Long {
             graph [goal="Long task"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             a [shape=box, prompt="Step A"]
             b [shape=box, prompt="Step B"]
             c [shape=box, prompt="Step C"]
@@ -374,7 +374,7 @@ class TestSSESubscriber:
 
         run = PipelineRun(
             id="test",
-            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="ellipse")}),
+            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
         queue = run.subscribe()
         run.emit("test.event", {"key": "value"})
@@ -390,7 +390,7 @@ class TestSSESubscriber:
 
         run = PipelineRun(
             id="test",
-            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="ellipse")}),
+            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
         queue = run.subscribe()
         run.close_subscribers()
@@ -404,7 +404,7 @@ class TestSSESubscriber:
 
         run = PipelineRun(
             id="test",
-            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="ellipse")}),
+            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
         queue = run.subscribe()
         run.unsubscribe(queue)
@@ -423,7 +423,7 @@ class TestWebInterviewer:
 
         run = PipelineRun(
             id="test",
-            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="ellipse")}),
+            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
         interviewer = WebInterviewer(run, timeout=5.0)
 
@@ -450,7 +450,7 @@ class TestWebInterviewer:
 
         run = PipelineRun(
             id="test",
-            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="ellipse")}),
+            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
         interviewer = WebInterviewer(run, timeout=0.1)
 
@@ -463,6 +463,6 @@ class TestWebInterviewer:
 
         run = PipelineRun(
             id="test",
-            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="ellipse")}),
+            graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
         assert submit_answer(run, "nonexistent", "yes") is False

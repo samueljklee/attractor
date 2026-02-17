@@ -199,7 +199,7 @@ class TestQuestionType:
 def _make_graph(**kwargs: object) -> Graph:
     """Create a minimal valid graph for testing."""
     g = Graph(name="test")
-    g.nodes["start"] = Node(id="start", shape="ellipse", label="Start")
+    g.nodes["start"] = Node(id="start", shape="Mdiamond", label="Start")
     g.nodes["end"] = Node(id="end", shape="Msquare", label="End")
     g.edges.append(Edge(source="start", target="end"))
     for k, v in kwargs.items():

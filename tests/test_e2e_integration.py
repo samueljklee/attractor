@@ -153,7 +153,7 @@ class TestPipelineWithAgentLoop:
         g = parse_dot(f"""
         digraph WriteCode {{
             graph [goal="Write a Python function"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [
                 shape=box,
                 prompt="Write a function called add that takes two numbers and returns their sum. Save it to {workspace}/add.py"
@@ -197,7 +197,7 @@ class TestMultiStagePipeline:
         g = parse_dot("""
         digraph Chained {
             graph [goal="Build a temperature converter"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             plan [
                 shape=box,
                 prompt="Create a brief 3-bullet plan for: $goal. Be very concise."
@@ -368,7 +368,7 @@ class TestSoftwareFactory:
         g = parse_dot("""
         digraph Factory {
             graph [goal="Write a Python function that checks if a string is a palindrome"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
 
             plan [
                 shape=box,

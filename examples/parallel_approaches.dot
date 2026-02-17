@@ -9,7 +9,7 @@
 digraph ParallelApproaches {
     graph [goal="Write a Python function that finds the longest palindromic substring"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     fork [shape=component, label="Fan out"]
 

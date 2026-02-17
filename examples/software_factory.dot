@@ -9,7 +9,7 @@
 digraph SoftwareFactory {
     graph [goal="Build a Python CLI tool that converts CSV files to JSON"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     research [
         shape=box,

@@ -394,7 +394,7 @@ class TestTruncationOrdering:
 
         assert was_truncated is True
         assert len(result) < len(output)
-        assert "characters omitted" in result
+        assert "characters were removed from the middle" in result
 
     def test_lines_truncated_after_chars(self):
         """Line truncation operates on the already char-truncated output."""
@@ -406,7 +406,7 @@ class TestTruncationOrdering:
         result, was_truncated = truncate_output(output, limits)
 
         assert was_truncated is True
-        assert "lines omitted" in result
+        assert "lines were removed from the middle" in result
 
     def test_both_passes_can_trigger(self):
         """Both char and line truncation can trigger in sequence.
@@ -422,10 +422,12 @@ class TestTruncationOrdering:
         result, was_truncated = truncate_output(output, limits)
 
         assert was_truncated is True
-        # Line count bounded by max_lines (+ a few for omission markers)
-        assert len(result.split("\n")) <= 20 + 4
-        # Char count well under original (both passes ran)
-        assert len(result) < 10_000
+        # Line count bounded by max_lines (+ a few for omission markers and
+        # the longer WARNING text which may wrap across multiple lines)
+        assert len(result.split("\n")) <= 20 + 10
+        # Char count well under original (both passes ran); the WARNING
+        # marker text adds overhead so we allow up to 11k
+        assert len(result) < 11_000
 
     def test_no_truncation_when_within_limits(self):
         result, was_truncated = truncate_output("short", TruncationLimits())

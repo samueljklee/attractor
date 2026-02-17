@@ -117,14 +117,14 @@ class TestTruncation:
         long_text = "x" * 50_000
         result, truncated = truncate_output(long_text, TruncationLimits(max_chars=1000))
         assert truncated is True
-        assert len(result) < 1200
-        assert "characters omitted" in result
+        assert len(result) < 1400
+        assert "characters were removed from the middle" in result
 
     def test_line_truncation(self):
         many_lines = "\n".join(f"line {i}" for i in range(1000))
         result, truncated = truncate_output(many_lines, TruncationLimits(max_lines=100))
         assert truncated is True
-        assert "lines omitted" in result
+        assert "lines were removed from the middle" in result
 
     def test_empty_string(self):
         result, truncated = truncate_output("")

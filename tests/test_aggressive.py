@@ -413,7 +413,7 @@ class TestConcurrencyStress:
         g = parse_dot(f"""
         digraph Stress {{
             graph [goal="Stress test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
 {branch_nodes}
             join [shape=tripleoctagon]
@@ -470,7 +470,7 @@ class TestConcurrencyStress:
         g = parse_dot("""
         digraph Sem {
             graph [goal="Semaphore test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component, max_parallel="2"]
             a [shape=box, prompt="A"]
             b [shape=box, prompt="B"]

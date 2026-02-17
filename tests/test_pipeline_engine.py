@@ -38,7 +38,7 @@ class TestDotParser:
         g = parse_dot("""
         digraph Simple {
             graph [goal="Test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             task [shape=box]
             done [shape=Msquare]
             start -> task -> done
@@ -51,7 +51,7 @@ class TestDotParser:
     def test_chained_edges_expand(self):
         g = parse_dot("""
         digraph Chain {
-            a [shape=ellipse]
+            a [shape=Mdiamond]
             b [shape=box]
             c [shape=box]
             d [shape=Msquare]
@@ -66,7 +66,7 @@ class TestDotParser:
     def test_edge_attributes(self):
         g = parse_dot("""
         digraph Attrs {
-            a [shape=ellipse]
+            a [shape=Mdiamond]
             b [shape=box]
             a -> b [label="yes", condition="outcome = success", weight="2.0"]
         }
@@ -106,7 +106,7 @@ class TestDotParser:
         // line comment
         digraph Comments {
             /* block comment */
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare]
             start -> done
         }
@@ -117,7 +117,7 @@ class TestDotParser:
         g = parse_dot("""
         digraph Config {
             graph [goal="X", default_max_retry="10", max_goal_gate_redirects="3"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
         }
         """)
         assert g.goal == "X"
@@ -130,7 +130,7 @@ class TestDotParser:
 
     def test_start_node_lookup(self):
         g = parse_dot("""
-        digraph S { start [shape=ellipse]; done [shape=Msquare]; start -> done }
+        digraph S { start [shape=Mdiamond]; done [shape=Msquare]; start -> done }
         """)
         assert g.get_start_node() is not None
         assert g.get_start_node().id == "start"
@@ -138,7 +138,7 @@ class TestDotParser:
     def test_exit_nodes_lookup(self):
         g = parse_dot("""
         digraph E {
-            s [shape=ellipse]
+            s [shape=Mdiamond]
             d1 [shape=Msquare]
             d2 [shape=Msquare]
             s -> d1; s -> d2
@@ -242,7 +242,7 @@ class TestPipelineExecution:
         g = parse_dot("""
         digraph L {
             graph [goal="Test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             task [shape=box, prompt="Hello"]
             done [shape=Msquare]
             start -> task -> done
@@ -261,7 +261,7 @@ class TestPipelineExecution:
         g = parse_dot("""
         digraph B {
             graph [goal="Branch"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             check [shape=diamond]
             yes [shape=box, prompt="Y"]
             no [shape=box, prompt="N"]
@@ -285,7 +285,7 @@ class TestPipelineExecution:
         g = parse_dot("""
         digraph G {
             graph [goal="Gate", max_goal_gate_redirects="2"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Code"]
             done [shape=Msquare, goal_gate="outcome = fail", retry_target="code"]
             start -> code -> done
@@ -302,7 +302,7 @@ class TestPipelineExecution:
     async def test_abort_cancels_pipeline(self):
         g = parse_dot("""
         digraph A {
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare]
             start -> done
         }
@@ -321,7 +321,7 @@ class TestPipelineExecution:
         g = parse_dot("""
         digraph C {
             graph [goal="Checkpoint"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             t1 [shape=box, prompt="T1"]
             done [shape=Msquare]
             start -> t1 -> done
@@ -342,7 +342,7 @@ class TestPipelineExecution:
     async def test_tool_handler_executes_command(self):
         g = parse_dot("""
         digraph T {
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             run [shape=parallelogram, prompt="echo hello_pipeline"]
             done [shape=Msquare]
             start -> run -> done
@@ -359,7 +359,7 @@ class TestPipelineExecution:
     async def test_human_handler_auto_approve(self):
         g = parse_dot("""
         digraph H {
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             gate [shape=house, prompt="Approve?"]
             task [shape=box, prompt="Do it"]
             done [shape=Msquare]
@@ -379,7 +379,7 @@ class TestPipelineExecution:
     async def test_missing_handler_fails(self):
         g = parse_dot("""
         digraph M {
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             custom [shape=box, handler="nonexistent"]
             done [shape=Msquare]
             start -> custom -> done
@@ -401,7 +401,7 @@ class TestPipelineExecution:
         g = parse_dot("""
         digraph CB {
             graph [goal="Build feature"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Implement $goal"]
             done [shape=Msquare]
             start -> code -> done
@@ -426,7 +426,7 @@ class TestPipelineExecution:
 class TestValidation:
     def test_valid_graph_passes(self):
         g = parse_dot("""
-        digraph V { graph [goal="X"]; start [shape=ellipse]; done [shape=Msquare]; start -> done }
+        digraph V { graph [goal="X"]; start [shape=Mdiamond]; done [shape=Msquare]; start -> done }
         """)
         diags = validate(g)
         errors = [d for d in diags if d.severity == Severity.ERROR]
@@ -442,7 +442,7 @@ class TestValidation:
 
     def test_missing_exit_node(self):
         g = parse_dot("""
-        digraph NoExit { start [shape=ellipse]; task [shape=box]; start -> task }
+        digraph NoExit { start [shape=Mdiamond]; task [shape=box]; start -> task }
         """)
         diags = validate(g)
         r02 = [d for d in diags if d.rule == "R02"]
@@ -450,7 +450,7 @@ class TestValidation:
 
     def test_exit_unreachable(self):
         g = parse_dot("""
-        digraph Unreach { start [shape=ellipse]; a [shape=box]; done [shape=Msquare]; start -> a }
+        digraph Unreach { start [shape=Mdiamond]; a [shape=box]; done [shape=Msquare]; start -> a }
         """)
         diags = validate(g)
         r07 = [d for d in diags if d.rule == "R07"]
@@ -465,7 +465,7 @@ class TestValidation:
         g = parse_dot("""
         digraph BadRetry {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare, goal_gate="outcome = success", retry_target="ghost"]
             start -> done
         }
@@ -478,7 +478,7 @@ class TestValidation:
         g = parse_dot("""
         digraph Loop {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             task [shape=box]
             done [shape=Msquare]
             start -> task -> done
@@ -491,7 +491,7 @@ class TestValidation:
 
     def test_no_goal_info(self):
         g = parse_dot("""
-        digraph NoGoal { start [shape=ellipse]; done [shape=Msquare]; start -> done }
+        digraph NoGoal { start [shape=Mdiamond]; done [shape=Msquare]; start -> done }
         """)
         diags = validate(g)
         r12 = [d for d in diags if d.rule == "R12"]
@@ -532,7 +532,7 @@ class TestStylesheet:
         g = parse_dot("""
         digraph S {
             graph [model_stylesheet="* { llm_model: base; }\nbox { llm_model: shape; }\n.special { llm_model: class; }\n#node1 { llm_model: id; }"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             node1 [shape=box, class="special"]
             node2 [shape=box, class="special"]
             node3 [shape=box]
@@ -550,7 +550,7 @@ class TestStylesheet:
         g = parse_dot("""
         digraph O {
             graph [model_stylesheet="* { llm_model: stylesheet; }"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             explicit [shape=box, llm_model="from-dot"]
             implicit [shape=box]
             done [shape=Msquare]

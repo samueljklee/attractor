@@ -15,7 +15,7 @@
 digraph PromptLayering {
     graph [goal="Build a URL shortener microservice"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     // This node gets a node-specific instruction on top of the profile + goal
     architect [

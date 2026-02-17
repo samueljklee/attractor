@@ -8,7 +8,7 @@ Attractor lets you define AI workflows as Graphviz DOT files. Each node in the g
 digraph Pipeline {
     graph [goal="Build a REST API"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
     plan [shape=box, prompt="Create a plan for: $goal"]
     implement [shape=box, prompt="Write the code for: $goal"]
     review [shape=diamond]
@@ -67,7 +67,7 @@ uv run python -m attractor_server --port 8080
 # Submit a pipeline
 curl -X POST http://localhost:8080/pipelines \
   -H "Content-Type: application/json" \
-  -d '{"dot_source": "digraph { start [shape=ellipse]; task [shape=box, prompt=\"Write a haiku\"]; done [shape=Msquare]; start -> task -> done }"}'
+  -d '{"dot_source": "digraph { start [shape=Mdiamond]; task [shape=box, prompt=\"Write a haiku\"]; done [shape=Msquare]; start -> task -> done }"}'
 
 # Watch events in real-time (SSE)
 curl -N http://localhost:8080/pipelines/{id}/events
@@ -117,7 +117,7 @@ Late-connecting SSE clients receive the full event history replay.
 
 | Shape | Node Type | What It Does |
 |-------|-----------|-------------|
-| `ellipse` | Start | Entry point (no-op) |
+| `Mdiamond` | Start | Entry point (no-op) |
 | `box` | Codergen | Calls an LLM with the node's prompt |
 | `diamond` | Conditional | Branches based on edge conditions |
 | `house` | Human Gate | Waits for human approval (CLI or HTTP) |
@@ -134,7 +134,7 @@ Node prompts support `$variable` and `${variable}` expansion from the pipeline c
 ```dot
 digraph {
     graph [goal="Build a CLI tool"]
-    start [shape=ellipse]
+    start [shape=Mdiamond]
     plan [shape=box, prompt="Plan: $goal"]
     implement [shape=box, prompt="Implement: $goal using ${language}"]
     done [shape=Msquare]
@@ -170,7 +170,7 @@ Specificity: `*` (0) < `shape` (1) < `.class` (2) < `#id` (3). Explicit node att
 
 ```dot
 digraph {
-    start [shape=ellipse]
+    start [shape=Mdiamond]
     fork [shape=component]
     a [shape=box, prompt="Approach A"]
     b [shape=box, prompt="Approach B"]
@@ -192,7 +192,7 @@ A hexagon node runs a child pipeline and retries if it fails:
 
 ```dot
 digraph {
-    start [shape=ellipse]
+    start [shape=Mdiamond]
     supervisor [shape=hexagon, child_graph="child.dot", max_iterations="3"]
     done [shape=Msquare]
     start -> supervisor -> done

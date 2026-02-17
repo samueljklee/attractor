@@ -22,7 +22,7 @@ digraph spec_driven_dev {
 
     // ── Entry ──────────────────────────────────────────────────
 
-    start [shape=ellipse label="Start"]
+    start [shape=Mdiamond label="Start"]
 
     // ── Phase 1: Catalog ───────────────────────────────────────
     //

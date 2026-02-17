@@ -10,7 +10,7 @@
 digraph HumanApproval {
     graph [goal="Deploy database migration to production"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     generate_migration [
         shape=box,

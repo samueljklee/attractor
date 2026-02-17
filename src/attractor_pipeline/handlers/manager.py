@@ -8,7 +8,7 @@ composition -- a pipeline node that itself runs a pipeline.
 Usage in DOT::
 
     digraph Supervised {
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         manager [
             shape=hexagon,
             child_graph="path/to/child.dot",

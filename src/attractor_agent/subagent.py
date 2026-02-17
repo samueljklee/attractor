@@ -54,6 +54,7 @@ async def spawn_subagent(
     abort_signal: AbortSignal | None = None,
     include_tools: bool = True,
     context: dict[str, Any] | None = None,
+    working_dir: str | None = None,
 ) -> SubagentResult:
     """Spawn a child agent session to handle a delegated task.
 
@@ -73,6 +74,7 @@ async def spawn_subagent(
         abort_signal: Cooperative cancellation (shared with parent).
         include_tools: Whether to give the subagent developer tools.
         context: Optional context dict passed to the subagent's system prompt.
+        working_dir: Working directory for the child agent (None = inherit cwd).
 
     Returns:
         SubagentResult with the child's response and metadata.
@@ -96,6 +98,7 @@ async def spawn_subagent(
         system_prompt=system_prompt or "",
         max_turns=max_turns,
         max_tool_rounds_per_turn=max_tool_rounds,
+        working_dir=working_dir,
     )
 
     # Apply profile defaults
@@ -170,13 +173,15 @@ def _add_spawn_tool(
     max_depth: int,
     abort_signal: AbortSignal | None,
 ) -> list[Any]:
-    """Add a 'delegate' tool that lets subagents spawn further subagents."""
+    """Add a 'spawn_agent' tool that lets subagents spawn further subagents."""
     from attractor_llm.types import Tool
 
-    async def delegate_execute(
+    async def spawn_agent_execute(
         task: str,
         model: str | None = None,
         provider: str | None = None,
+        working_dir: str | None = None,
+        max_turns: int = 20,
     ) -> str:
         try:
             result = await spawn_subagent(
@@ -186,7 +191,9 @@ def _add_spawn_tool(
                 max_depth=max_depth,
                 model=model,
                 provider=provider,
+                max_turns=max_turns,
                 abort_signal=abort_signal,
+                working_dir=working_dir,
             )
             return result.text
         except MaxDepthError:
@@ -194,10 +201,10 @@ def _add_spawn_tool(
         except SubagentError as e:
             return f"[Delegation failed: {e}]"
 
-    delegate_tool = Tool(
-        name="delegate",
+    spawn_tool = Tool(
+        name="spawn_agent",
         description=(
-            f"Delegate a subtask to a child agent. The child has its own "
+            f"Spawn a child agent to handle a subtask. The child has its own "
             f"conversation and tools. Current depth: {parent_depth + 1}/{max_depth}. "
             f"Use for tasks that benefit from focused, isolated execution."
         ),
@@ -216,10 +223,19 @@ def _add_spawn_tool(
                     "type": "string",
                     "description": "Optional provider override",
                 },
+                "working_dir": {
+                    "type": "string",
+                    "description": "Working directory for the child agent",
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Maximum turns for the child session. Default: 20",
+                    "default": 20,
+                },
             },
             "required": ["task"],
         },
-        execute=delegate_execute,
+        execute=spawn_agent_execute,
     )
 
-    return [*tools, delegate_tool]
+    return [*tools, spawn_tool]

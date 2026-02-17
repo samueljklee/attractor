@@ -25,7 +25,7 @@ class NodeShape(StrEnum):
     PARALLELOGRAM = "parallelogram"  # tool (shell/script)
     HOUSE = "house"  # wait.human (human gate)
     MSQUARE = "Msquare"  # exit (terminal)
-    ELLIPSE = "ellipse"  # start (entry point)
+    MDIAMOND = "Mdiamond"  # start (entry point)
 
     @classmethod
     def handler_for_shape(cls, shape: str) -> str:
@@ -39,7 +39,7 @@ class NodeShape(StrEnum):
             "parallelogram": "tool",
             "house": "wait.human",
             "Msquare": "exit",
-            "ellipse": "start",
+            "Mdiamond": "start",
         }
         return mapping.get(shape, "codergen")
 
@@ -129,13 +129,13 @@ class Graph:
         return self.nodes.get(node_id)
 
     def get_start_node(self) -> Node | None:
-        """Find the start node (shape=ellipse only).
+        """Find the start node (shape=Mdiamond only).
 
-        The validator (R01) enforces that exactly one ellipse node exists.
+        The validator (R01) enforces that exactly one Mdiamond node exists.
         No name-based fallback -- the shape is the single source of truth.
         """
         for node in self.nodes.values():
-            if node.shape == "ellipse":
+            if node.shape == "Mdiamond":
                 return node
         return None
 

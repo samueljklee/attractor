@@ -33,7 +33,7 @@ digraph codebase_to_spec {
 
     // ── Entry ──────────────────────────────────────────────────
 
-    start [shape=ellipse label="Start"]
+    start [shape=Mdiamond label="Start"]
 
     // ── Phase 1: Discover ──────────────────────────────────────
     //

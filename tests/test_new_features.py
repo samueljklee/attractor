@@ -561,7 +561,7 @@ class TestSubagentSpawning:
 
         req = adapter.requests[0]
         tool_names = [t.name for t in (req.tools or [])]
-        assert "delegate" in tool_names
+        assert "spawn_agent" in tool_names
 
     @pytest.mark.asyncio
     async def test_subagent_no_delegate_tool_at_max_depth_minus_one(self):
@@ -583,7 +583,7 @@ class TestSubagentSpawning:
         req = adapter.requests[0]
         tool_names = [t.name for t in (req.tools or [])]
         # Child depth is 3, max_depth is 3 -> can't delegate further
-        assert "delegate" not in tool_names
+        assert "spawn_agent" not in tool_names
 
     @pytest.mark.asyncio
     async def test_usage_tracked(self):

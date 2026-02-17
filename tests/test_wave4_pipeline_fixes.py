@@ -65,7 +65,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph S {
             graph [goal="Test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare]
             start -> done
         }
@@ -91,7 +91,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph E {
             graph [goal="Test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare]
             start -> done
         }
@@ -117,7 +117,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph C {
             graph [goal="Build widget"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Implement $goal"]
             done [shape=Msquare]
             start -> code -> done
@@ -152,7 +152,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph D {
             graph [goal="Branch"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             check [shape=diamond]
             done [shape=Msquare]
             start -> check -> done
@@ -174,7 +174,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph T {
             graph [goal="Run tool"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             run [shape=parallelogram, prompt="echo hello_artifact"]
             done [shape=Msquare]
             start -> run -> done
@@ -205,7 +205,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph N {
             graph [goal="Test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Do something"]
             done [shape=Msquare]
             start -> code -> done
@@ -225,7 +225,7 @@ class TestPerNodeArtifacts:
         g = parse_dot("""
         digraph Multi {
             graph [goal="Multi-step"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             step1 [shape=box, prompt="Step 1"]
             step2 [shape=box, prompt="Step 2"]
             done [shape=Msquare]
@@ -262,7 +262,7 @@ class TestAggregateGoalGate:
         g = parse_dot("""
         digraph G {
             graph [goal="Gate test", max_goal_gate_redirects="2"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Code", goal_gate="outcome = fail", retry_target="code"]
             done [shape=Msquare]
             start -> code -> done
@@ -286,7 +286,7 @@ class TestAggregateGoalGate:
         g = parse_dot("""
         digraph G {
             graph [goal="Gate OK"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Code", goal_gate="outcome = success"]
             done [shape=Msquare]
             start -> code -> done
@@ -306,7 +306,7 @@ class TestAggregateGoalGate:
         g = parse_dot("""
         digraph G {
             graph [goal="Unvisited"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             check [shape=diamond]
             code [shape=box, prompt="Code"]
             other_code [shape=box, prompt="Other", goal_gate="outcome = fail", retry_target="other_code"]
@@ -344,7 +344,7 @@ class TestAggregateGoalGate:
         g = parse_dot("""
         digraph G {
             graph [goal="Retry", max_goal_gate_redirects="3"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             code [shape=box, prompt="Code", goal_gate="outcome = fail", retry_target="retry_node"]
             retry_node [shape=box, prompt="Retry"]
             done [shape=Msquare]
@@ -370,7 +370,7 @@ class TestAggregateGoalGate:
         g = parse_dot("""
         digraph G {
             graph [goal="Multi-gate", max_goal_gate_redirects="2"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             gate1 [shape=box, prompt="G1", goal_gate="outcome = success"]
             gate2 [shape=box, prompt="G2", goal_gate="outcome = success"]
             done [shape=Msquare]
@@ -392,7 +392,7 @@ class TestAggregateGoalGate:
         g = parse_dot("""
         digraph G {
             graph [goal="Multi-gate fail", max_goal_gate_redirects="2"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             gate1 [shape=box, prompt="G1", goal_gate="outcome = success"]
             gate2 [shape=box, prompt="G2", goal_gate="outcome = fail", retry_target="gate2"]
             done [shape=Msquare]

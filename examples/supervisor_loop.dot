@@ -11,7 +11,7 @@
 digraph SupervisorLoop {
     graph [goal="Write a robust input validation module"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     supervisor [
         shape=hexagon,

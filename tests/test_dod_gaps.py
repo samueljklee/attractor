@@ -68,7 +68,7 @@ class _FailNHandler:
 def _make_linear_graph() -> Graph:
     """A minimal graph: start -> work -> exit."""
     g = Graph(name="test", default_max_retry=5)
-    g.nodes["start"] = Node(id="start", shape="ellipse")
+    g.nodes["start"] = Node(id="start", shape="Mdiamond")
     g.nodes["work"] = Node(id="work", shape="box")
     g.nodes["exit"] = Node(id="exit", shape="Msquare")
     g.edges.append(Edge(source="start", target="work"))
@@ -673,7 +673,7 @@ class TestGoalGateAllNodes:
         pipeline to proceed through to the exit node.
         """
         g = Graph(name="test", default_max_retry=3, max_goal_gate_redirects=5)
-        g.nodes["start"] = Node(id="start", shape="ellipse")
+        g.nodes["start"] = Node(id="start", shape="Mdiamond")
         # 'check' node has a goal_gate but is NOT an exit node
         g.nodes["check"] = Node(
             id="check",
@@ -798,7 +798,7 @@ class TestPerNodeArtifacts:
             name="test",
             goal="test goal",
             nodes={
-                "start": Node(id="start", shape="ellipse"),
+                "start": Node(id="start", shape="Mdiamond"),
                 "my_node": Node(id="my_node", shape="box", prompt="Do something: ${goal}"),
                 "done": Node(id="done", shape="Msquare"),
             },
@@ -850,7 +850,7 @@ class TestPerNodeArtifacts:
         g = Graph(
             name="test",
             nodes={
-                "start": Node(id="start", shape="ellipse"),
+                "start": Node(id="start", shape="Mdiamond"),
                 "node1": Node(id="node1", shape="box", prompt="Do it"),
                 "done": Node(id="done", shape="Msquare"),
             },
