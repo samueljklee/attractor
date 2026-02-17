@@ -275,7 +275,7 @@ async def stream(
         temperature=temperature,
     )
 
-    event_stream = await client.stream(request)
+    event_stream = await client.stream(request, abort_signal=abort_signal)
     return StreamResult(event_stream)
 
 

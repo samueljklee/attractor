@@ -53,7 +53,7 @@ class GeminiAdapter:
         # Use AdapterTimeout if provided, else fall back to legacy timeout
         at = config.adapter_timeout
         if at:
-            timeout = httpx.Timeout(at.request, connect=at.connect)
+            timeout = httpx.Timeout(at.request, connect=at.connect, read=at.stream_read)
         else:
             timeout = httpx.Timeout(config.timeout, connect=10.0)
 
