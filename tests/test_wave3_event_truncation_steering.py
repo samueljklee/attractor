@@ -60,7 +60,7 @@ class FakeClient(Client):
         self._responses = list(responses)
         self._idx = 0
 
-    async def complete(self, request):  # noqa: ANN001
+    async def complete(self, request, **kwargs):  # noqa: ANN001
         resp = self._responses[self._idx]
         self._idx = min(self._idx + 1, len(self._responses) - 1)
         return resp

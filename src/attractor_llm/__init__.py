@@ -32,8 +32,9 @@ from attractor_llm.errors import (
 )
 from attractor_llm.generate import generate, generate_object, stream
 from attractor_llm.retry import RetryPolicy, retry_with_policy
-from attractor_llm.streaming import StreamAccumulator
+from attractor_llm.streaming import StreamAccumulator, StreamResult
 from attractor_llm.types import (
+    AdapterTimeout,
     AudioData,
     ContentPart,
     ContentPartKind,
@@ -48,6 +49,7 @@ from attractor_llm.types import (
     StepResult,
     StreamEvent,
     StreamEventKind,
+    TimeoutConfig,
     Tool,
     Usage,
 )
@@ -76,6 +78,8 @@ __all__ = [
     "GenerateResult",
     "StreamEventKind",
     "StreamEvent",
+    "TimeoutConfig",
+    "AdapterTimeout",
     # Errors
     "SDKError",
     "ProviderError",
@@ -107,6 +111,7 @@ __all__ = [
     "get_default_model",
     # Streaming
     "StreamAccumulator",
+    "StreamResult",
     # High-level API
     "generate",
     "stream",
