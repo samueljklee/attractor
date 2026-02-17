@@ -236,19 +236,24 @@ class OpenAIAdapter:
                 case ContentPartKind.TEXT:
                     parts.append({"type": "input_text", "text": part.text or ""})
                 case ContentPartKind.IMAGE:
-                    if part.image and part.image.url:
+                    image = part.image
+                    if image:
+                        from attractor_llm.adapters.image_utils import resolve_image_data
+
+                        image = resolve_image_data(image)
+                    if image and image.url:
                         parts.append(
                             {
                                 "type": "input_image",
-                                "image_url": part.image.url,
+                                "image_url": image.url,
                             }
                         )
-                    elif part.image and part.image.data:
+                    elif image and image.data:
                         import base64
 
                         data_uri = (
-                            f"data:{part.image.media_type};base64,"
-                            f"{base64.b64encode(part.image.data).decode()}"
+                            f"data:{image.media_type};base64,"
+                            f"{base64.b64encode(image.data).decode()}"
                         )
                         parts.append(
                             {

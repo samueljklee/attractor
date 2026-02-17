@@ -83,6 +83,35 @@ class ImageData(BaseModel):
         return cls(data=raw, file_path=str(p), media_type=mime)
 
 
+class AudioData(BaseModel):
+    """Audio content, either inline bytes or URL. Spec §3.5."""
+
+    url: str | None = None
+    data: bytes | None = None
+    media_type: str | None = None
+
+    @model_validator(mode="after")
+    def _check_source(self) -> Self:
+        if self.data is None and self.url is None:
+            raise ValueError("AudioData requires either 'data' or 'url'")
+        return self
+
+
+class DocumentData(BaseModel):
+    """Document content, either inline bytes or URL. Spec §3.5."""
+
+    url: str | None = None
+    data: bytes | None = None
+    media_type: str | None = None
+    file_name: str | None = None
+
+    @model_validator(mode="after")
+    def _check_source(self) -> Self:
+        if self.data is None and self.url is None:
+            raise ValueError("DocumentData requires either 'data' or 'url'")
+        return self
+
+
 class ContentPart(BaseModel):
     """Tagged union for message content parts. Spec §3.2.
 
@@ -98,6 +127,12 @@ class ContentPart(BaseModel):
 
     # IMAGE
     image: ImageData | None = None
+
+    # AUDIO (Spec §3.5)
+    audio: AudioData | None = None
+
+    # DOCUMENT (Spec §3.5)
+    document: DocumentData | None = None
 
     # TOOL_CALL / TOOL_RESULT
     tool_call_id: str | None = None
@@ -136,10 +171,12 @@ class ContentPart(BaseModel):
             case ContentPartKind.REDACTED_THINKING:
                 if self.redacted_data is None:
                     raise ValueError("REDACTED_THINKING content part requires 'redacted_data'")
-            case ContentPartKind.AUDIO | ContentPartKind.DOCUMENT:
-                # Future content types — accepted but no adapter support yet.
-                # Adapters should skip or raise on these kinds.
-                pass
+            case ContentPartKind.AUDIO:
+                if self.audio is None:
+                    raise ValueError("AUDIO content part requires 'audio'")
+            case ContentPartKind.DOCUMENT:
+                if self.document is None:
+                    raise ValueError("DOCUMENT content part requires 'document'")
         return self
 
     @classmethod
@@ -176,6 +213,14 @@ class ContentPart(BaseModel):
     @classmethod
     def thinking_part(cls, text: str, signature: str | None = None) -> ContentPart:
         return cls(kind=ContentPartKind.THINKING, text=text, signature=signature)
+
+    @classmethod
+    def audio_part(cls, audio: AudioData) -> ContentPart:
+        return cls(kind=ContentPartKind.AUDIO, audio=audio)
+
+    @classmethod
+    def document_part(cls, document: DocumentData) -> ContentPart:
+        return cls(kind=ContentPartKind.DOCUMENT, document=document)
 
     @classmethod
     def redacted_thinking_part(cls, redacted_data: str) -> ContentPart:

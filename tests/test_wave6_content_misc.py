@@ -43,14 +43,24 @@ class TestAudioDocumentContentTypes:
         assert ContentPartKind.DOCUMENT == "document"
 
     def test_audio_content_part_accepted(self):
-        """AUDIO kind can be constructed (future-proof, no required fields yet)."""
-        part = ContentPart(kind=ContentPartKind.AUDIO)
+        """AUDIO kind requires 'audio' field (Spec §3.5)."""
+        from attractor_llm.types import AudioData
+
+        part = ContentPart(
+            kind=ContentPartKind.AUDIO, audio=AudioData(url="https://example.com/a.mp3")
+        )
         assert part.kind == ContentPartKind.AUDIO
+        assert part.audio is not None
 
     def test_document_content_part_accepted(self):
-        """DOCUMENT kind can be constructed (future-proof, no required fields yet)."""
-        part = ContentPart(kind=ContentPartKind.DOCUMENT)
+        """DOCUMENT kind requires 'document' field (Spec §3.5)."""
+        from attractor_llm.types import DocumentData
+
+        part = ContentPart(
+            kind=ContentPartKind.DOCUMENT, document=DocumentData(url="https://example.com/d.pdf")
+        )
         assert part.kind == ContentPartKind.DOCUMENT
+        assert part.document is not None
 
     def test_all_original_kinds_still_present(self):
         """Ensure adding new kinds didn't break existing ones."""

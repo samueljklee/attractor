@@ -81,8 +81,16 @@ class SubagentManager:
         max_tool_rounds: int = 15,
         abort_signal: AbortSignal | None = None,
         include_tools: bool = True,
+        working_dir: str | None = None,
     ) -> str:
         """Spawn an interactive subagent as a background task.
+
+        The subagent shares the parent's ExecutionEnvironment (same
+        filesystem) per spec §7.1. The environment is a module-level
+        singleton in ``tools.core``, so all sessions in the same process
+        automatically share it. The ``working_dir`` parameter propagates
+        the parent's working directory so the child operates in the same
+        filesystem context.
 
         Returns the agent_id for use with send_input / wait_for_output /
         close_agent.
@@ -104,6 +112,7 @@ class SubagentManager:
             system_prompt=system_prompt or "",
             max_turns=max_turns,
             max_tool_rounds_per_turn=max_tool_rounds,
+            working_dir=working_dir,
         )
         config = profile.apply_to_config(config)
 
@@ -161,20 +170,36 @@ class SubagentManager:
     async def wait_for_output(self, agent_id: str) -> str:
         """Wait for a subagent to complete and return its output.
 
+        Returns a JSON-serialized SubAgentResult dict per spec §7.3:
+        ``{"output": "...", "success": true/false, "turns_used": N}``
+
         The agent is removed from tracking after this call returns.
         """
+        import json
+
         tracked = self._agents.get(agent_id)
         if tracked is None:
-            return f"Error: No agent found with ID '{agent_id}'"
+            return json.dumps(
+                {
+                    "output": f"Error: No agent found with ID '{agent_id}'",
+                    "success": False,
+                    "turns_used": 0,
+                }
+            )
 
+        success = True
+        turns_used = 0
         try:
             result = await tracked.task
+            turns_used = tracked.session.turn_count
         except Exception as exc:
             result = f"Error: Agent '{agent_id}' failed: {type(exc).__name__}: {exc}"
+            success = False
+            turns_used = tracked.session.turn_count
         finally:
             self._agents.pop(agent_id, None)
 
-        return result
+        return json.dumps({"output": result, "success": success, "turns_used": turns_used})
 
     def close_agent(self, agent_id: str) -> str:
         """Terminate a running subagent by setting its abort signal.

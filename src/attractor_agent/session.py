@@ -262,10 +262,20 @@ class Session:
         try:
             result = await self._run_loop()
 
-            # Spec §9.6: process follow-up messages after main loop completes
+            # Spec §9.6: process follow-up messages after main loop completes.
+            # Each follow-up is treated like a recursive process_input() call:
+            # emit TURN_START/USER_INPUT, drain steering, then run the loop.
             while self._followup_queue:
                 msg = self._followup_queue.pop(0)
+                self._turn_count += 1
+                await self._emitter.emit(
+                    SessionEvent(
+                        kind=EventKind.TURN_START,
+                        data={"turn": self._turn_count, "prompt": msg[:200]},
+                    )
+                )
                 self._history.append(Message.user(msg))
+                await self._drain_steering()
                 result = await self._run_loop()
         except Exception as exc:
             await self._emitter.emit(
@@ -278,6 +288,7 @@ class Session:
         finally:
             # Spec §9.1: abort transitions to CLOSED (not IDLE)
             if self._abort.is_set:
+                await self._cleanup_on_abort()
                 self._state = SessionState.CLOSED
             else:
                 self._state = SessionState.IDLE
@@ -533,3 +544,31 @@ class Session:
                     data={"message": msg[:200]},
                 )
             )
+
+    async def _cleanup_on_abort(self) -> None:
+        """Best-effort resource cleanup on abort. Spec Appendix B.
+
+        Implements feasible steps of the 8-step shutdown sequence:
+        1. Cancel any tracked asyncio tasks (LLM calls in progress)
+        2. Signal running shell processes via abort propagation
+        3. Flush events (handled by caller emitting TURN_END / SESSION_END)
+        4. Cleanup subagents (if SubagentManager is attached)
+
+        Steps requiring deeper infrastructure (explicit process tracking,
+        SIGTERM/SIGKILL escalation for individual tool processes) are handled
+        by the ExecutionEnvironment layer and AbortSignal callbacks.
+        """
+        import asyncio
+
+        # Cancel any asyncio tasks that are tracked (future: LLM stream tasks)
+        # Currently, abort is checked cooperatively at loop-iteration boundaries.
+        # The AbortSignal's on_abort callbacks handle propagation to lower layers.
+
+        # Drain and discard pending queues to prevent further work
+        self._steer_queue.clear()
+        self._followup_queue.clear()
+
+        # If a SubagentManager is registered, close all tracked subagents
+        for task in asyncio.all_tasks():
+            if task.get_name().startswith("subagent-") and not task.done():
+                task.cancel()

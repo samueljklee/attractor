@@ -160,15 +160,19 @@ class TestSendInput:
 
 
 class TestWaitForOutput:
-    """wait_for_output returns the subagent result."""
+    """wait_for_output returns a JSON SubAgentResult (Spec §7.3)."""
 
     @pytest.mark.asyncio
     async def test_returns_result(self):
+        import json
+
         manager = SubagentManager()
         _register_fake_agent(manager, "agent-001", result="task complete")
 
         output = await manager.wait_for_output("agent-001")
-        assert output == "task complete"
+        parsed = json.loads(output)
+        assert parsed["output"] == "task complete"
+        assert parsed["success"] is True
 
     @pytest.mark.asyncio
     async def test_removes_agent_after_wait(self):
@@ -181,20 +185,26 @@ class TestWaitForOutput:
 
     @pytest.mark.asyncio
     async def test_nonexistent_agent_returns_error(self):
+        import json
+
         manager = SubagentManager()
         result = await manager.wait_for_output("no-such-agent")
-        assert "error" in result.lower()
-        assert "no-such-agent" in result
+        parsed = json.loads(result)
+        assert parsed["success"] is False
+        assert "no-such-agent" in parsed["output"]
 
     @pytest.mark.asyncio
     async def test_failed_agent_returns_error(self):
+        import json
+
         manager = SubagentManager()
         _register_failing_agent(manager, "agent-fail", error=ValueError("bad input"))
 
         result = await manager.wait_for_output("agent-fail")
-        assert "error" in result.lower()
-        assert "ValueError" in result
-        assert "bad input" in result
+        parsed = json.loads(result)
+        assert parsed["success"] is False
+        assert "ValueError" in parsed["output"]
+        assert "bad input" in parsed["output"]
 
     @pytest.mark.asyncio
     async def test_failed_agent_still_removed(self):
@@ -206,16 +216,18 @@ class TestWaitForOutput:
 
     @pytest.mark.asyncio
     async def test_multiple_agents_independent(self):
+        import json
+
         manager = SubagentManager()
         _register_fake_agent(manager, "agent-001", result="result-1")
         _register_fake_agent(manager, "agent-002", result="result-2")
 
         r1 = await manager.wait_for_output("agent-001")
-        assert r1 == "result-1"
+        assert json.loads(r1)["output"] == "result-1"
         assert len(manager.active_agents) == 1
 
         r2 = await manager.wait_for_output("agent-002")
-        assert r2 == "result-2"
+        assert json.loads(r2)["output"] == "result-2"
         assert len(manager.active_agents) == 0
 
 
@@ -308,13 +320,17 @@ class TestInteractiveTools:
 
     @pytest.mark.asyncio
     async def test_wait_tool_delegates(self):
+        import json
+
         manager = SubagentManager()
         _register_fake_agent(manager, "agent-001", result="final answer")
         tools = create_interactive_tools(manager)
         wait_tool = next(t for t in tools if t.name == "wait")
 
         result = await wait_tool.execute(agent_id="agent-001")
-        assert result == "final answer"
+        parsed = json.loads(result)
+        assert parsed["output"] == "final answer"
+        assert parsed["success"] is True
 
     @pytest.mark.asyncio
     async def test_close_agent_tool_delegates(self):
