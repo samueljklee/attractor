@@ -573,12 +573,13 @@ class TestStreaming:
 
     async def _run_stream(self, client: Client, model: str, provider: str) -> None:
         chunks: list[str] = []
-        async for chunk in stream(
+        result = await stream(
             client,
             model,
             "Count from 1 to 5, one number per line.",
             provider=provider,
-        ):
+        )
+        async for chunk in result:
             assert isinstance(chunk, str)
             chunks.append(chunk)
 

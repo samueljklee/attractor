@@ -148,25 +148,36 @@ class Client:
             f"Available: {list(self._adapters.keys())}"
         )
 
-    async def complete(self, request: Request) -> Response:
+    async def complete(self, request: Request, *, abort_signal: Any | None = None) -> Response:
         """Send a request and return the complete response. Spec §4.1.
 
         Routes to the appropriate adapter, applies retry policy.
+        Checks ``abort_signal`` between retry attempts.
         """
         adapter = self._resolve_adapter(request)
 
         async def _do_complete() -> Response:
+            if abort_signal is not None and abort_signal.is_set:
+                from attractor_llm.errors import AbortError
+
+                raise AbortError("Request aborted by signal")
             return await adapter.complete(request)
 
         return await retry_with_policy(_do_complete, self._retry_policy)
 
-    async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
+    async def stream(
+        self, request: Request, *, abort_signal: Any | None = None
+    ) -> AsyncIterator[StreamEvent]:
         """Send a request and return a streaming event iterator. Spec §4.2.
 
         Note: Streaming does not retry mid-stream. If the stream fails
         after partial data has been delivered, a StreamError is raised.
         Retry only applies to the initial connection.
         """
+        if abort_signal is not None and abort_signal.is_set:
+            from attractor_llm.errors import AbortError
+
+            raise AbortError("Stream aborted by signal")
         adapter = self._resolve_adapter(request)
         return adapter.stream(request)  # type: ignore[return-value]
 

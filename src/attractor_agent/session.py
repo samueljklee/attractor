@@ -490,7 +490,7 @@ class Session:
             provider_options=self._config.provider_options,
         )
 
-        return await self._client.complete(request)
+        return await self._client.complete(request, abort_signal=self._abort)
 
     def _build_enriched_system_prompt(self) -> str:
         """Compose the system prompt with environment context and project docs.

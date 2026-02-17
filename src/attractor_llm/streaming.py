@@ -1,9 +1,12 @@
-"""Stream accumulator for building responses from streaming events.
+"""Stream accumulator and StreamResult for building responses from streaming events.
 
 Collects StreamEvents and assembles them into a complete Response.
+StreamResult wraps a live event stream with convenient access patterns.
 """
 
 from __future__ import annotations
+
+from collections.abc import AsyncIterator
 
 from attractor_llm.types import (
     ContentPart,
@@ -146,3 +149,75 @@ class StreamAccumulator:
     def started(self) -> bool:
         """Whether a START event has been received."""
         return self._started
+
+
+class StreamResult:
+    """Result of a streaming generation. Spec §4.4.
+
+    Wraps a live stream of events and provides convenient access patterns:
+
+    - Async iterate for raw StreamEvents: ``async for event in result: ...``
+    - Use ``text_stream`` for text-only chunks: ``async for chunk in result.text_stream: ...``
+    - Call ``response()`` to consume remaining events and get the final Response.
+
+    The underlying stream can only be consumed once. Use one iteration pattern,
+    then call ``response()`` to get the accumulated result.
+
+    Usage::
+
+        result = await stream(client, model, prompt)
+
+        # Pattern 1: text chunks
+        async for chunk in result.text_stream:
+            print(chunk, end="")
+        resp = await result.response()
+
+        # Pattern 2: raw events
+        async for event in result:
+            handle(event)
+        resp = await result.response()
+
+        # Pattern 3: just get the response
+        resp = await result.response()
+    """
+
+    def __init__(self, event_stream: AsyncIterator[StreamEvent]) -> None:
+        self._event_stream = event_stream
+        self._accumulator = StreamAccumulator()
+        self._consumed = False
+
+    async def response(self) -> Response:
+        """Consume any remaining stream events and return the accumulated Response."""
+        if not self._consumed:
+            async for event in self._event_stream:
+                self._accumulator.feed(event)
+            self._consumed = True
+        return self._accumulator.response()
+
+    @property
+    def text_stream(self) -> AsyncIterator[str]:
+        """Async iterator yielding text chunks as they arrive from the provider."""
+        return self._text_stream_impl()
+
+    async def _text_stream_impl(self) -> AsyncIterator[str]:
+        async for event in self._event_stream:
+            self._accumulator.feed(event)
+            if event.kind == StreamEventKind.TEXT_DELTA and event.text:
+                yield event.text
+        self._consumed = True
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        """Backward-compat: iterating a StreamResult yields text chunks.
+
+        This allows ``async for chunk in result:`` to work the same as
+        ``async for chunk in result.text_stream:``, preserving the old
+        pattern where ``stream()`` returned an ``AsyncIterator[str]``.
+        """
+        return self._text_stream_impl()
+
+    async def iter_events(self) -> AsyncIterator[StreamEvent]:
+        """Iterate raw StreamEvents (for advanced consumers)."""
+        async for event in self._event_stream:
+            self._accumulator.feed(event)
+            yield event
+        self._consumed = True

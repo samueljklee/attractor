@@ -50,9 +50,17 @@ class OpenAIAdapter:
     def __init__(self, config: ProviderConfig) -> None:
         self._config = config
         self._base_url = (config.base_url or DEFAULT_BASE_URL).rstrip("/")
+
+        # Use AdapterTimeout if provided, else fall back to legacy timeout
+        at = config.adapter_timeout
+        if at:
+            timeout = httpx.Timeout(at.request, connect=at.connect, read=at.stream_read)
+        else:
+            timeout = httpx.Timeout(config.timeout, connect=10.0)
+
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
-            timeout=httpx.Timeout(config.timeout, connect=10.0),
+            timeout=timeout,
             headers={
                 "Authorization": f"Bearer {config.api_key}",
                 "Content-Type": "application/json",
@@ -121,8 +129,12 @@ class OpenAIAdapter:
             body["reasoning"] = {"effort": request.reasoning_effort}
 
         # Response format (Responses API uses text.format, not response_format)
+        # P6: Native structured output -- json_schema type requires a 'name' field
         if request.response_format:
-            body["text"] = {"format": request.response_format}
+            fmt = dict(request.response_format)
+            if fmt.get("type") == "json_schema" and "name" not in fmt:
+                fmt["name"] = "response"
+            body["text"] = {"format": fmt}
 
         # Provider-specific options
         openai_opts = (request.provider_options or {}).get("openai", {})

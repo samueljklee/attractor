@@ -406,14 +406,19 @@ class StreamEventKind(StrEnum):
     """Stream event types. Spec §3.13."""
 
     START = "start"
+    TEXT_START = "text_start"
     TEXT_DELTA = "text_delta"
+    TEXT_END = "text_end"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_DELTA = "tool_call_delta"
     TOOL_CALL_END = "tool_call_end"
     THINKING_DELTA = "thinking_delta"
+    REASONING_START = "reasoning_start"
+    REASONING_END = "reasoning_end"
     USAGE = "usage"
     FINISH = "finish"
     ERROR = "error"
+    PROVIDER_EVENT = "provider_event"
 
 
 class StreamEvent(BaseModel):
@@ -445,6 +450,9 @@ class StreamEvent(BaseModel):
 
     # ERROR
     error: str | None = None
+
+    # PROVIDER_EVENT
+    raw_event: dict[str, Any] | None = None
 
 
 # ------------------------------------------------------------------ #
@@ -494,3 +502,32 @@ class GenerateResult:
 
     def __bool__(self) -> bool:
         return bool(self.text)
+
+
+# ------------------------------------------------------------------ #
+# Timeout configuration (Spec §4.7)
+# ------------------------------------------------------------------ #
+
+
+@dataclass
+class TimeoutConfig:
+    """High-level timeout configuration for generate() calls. Spec §4.7.
+
+    Controls overall and per-step timeouts for the generate() tool loop.
+    """
+
+    total: float | None = None
+    per_step: float | None = None
+
+
+@dataclass
+class AdapterTimeout:
+    """Low-level HTTP timeout configuration for provider adapters. Spec §4.7.
+
+    Fine-grained control over HTTP connection, request, and stream timeouts.
+    Passed via ProviderConfig.adapter_timeout to configure httpx clients.
+    """
+
+    connect: float = 10.0
+    request: float = 120.0
+    stream_read: float = 30.0

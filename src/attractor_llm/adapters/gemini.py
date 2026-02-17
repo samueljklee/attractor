@@ -49,8 +49,16 @@ class GeminiAdapter:
     def __init__(self, config: ProviderConfig) -> None:
         self._config = config
         self._base_url = (config.base_url or DEFAULT_BASE_URL).rstrip("/")
+
+        # Use AdapterTimeout if provided, else fall back to legacy timeout
+        at = config.adapter_timeout
+        if at:
+            timeout = httpx.Timeout(at.request, connect=at.connect, read=at.stream_read)
+        else:
+            timeout = httpx.Timeout(config.timeout, connect=10.0)
+
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(config.timeout, connect=10.0),
+            timeout=timeout,
             headers={
                 "Content-Type": "application/json",
                 "x-goog-api-key": config.api_key,
@@ -98,8 +106,9 @@ class GeminiAdapter:
             gen_config["topP"] = request.top_p
         if request.stop:
             gen_config["stopSequences"] = request.stop
+        # P6: Native structured output -- handle both json_object and json_schema
         if request.response_format:
-            if request.response_format.get("type") == "json_object":
+            if request.response_format.get("type") in ("json_object", "json_schema"):
                 gen_config["responseMimeType"] = "application/json"
             if "schema" in request.response_format:
                 gen_config["responseSchema"] = request.response_format["schema"]

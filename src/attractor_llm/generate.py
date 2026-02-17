@@ -31,8 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from attractor_llm.client import Client
 from attractor_llm.types import (
@@ -43,10 +42,12 @@ from attractor_llm.types import (
     Request,
     Response,
     StepResult,
-    StreamEventKind,
     Tool,
     Usage,
 )
+
+if TYPE_CHECKING:
+    from attractor_llm.streaming import StreamResult
 
 
 async def generate(
@@ -61,6 +62,7 @@ async def generate(
     temperature: float | None = None,
     reasoning_effort: str | None = None,
     provider: str | None = None,
+    abort_signal: Any | None = None,
 ) -> GenerateResult:
     """Generate text with automatic tool execution loop. Spec §4.3.
 
@@ -78,6 +80,7 @@ async def generate(
         temperature: Optional temperature override.
         reasoning_effort: Optional reasoning effort.
         provider: Optional provider override.
+        abort_signal: Optional abort signal; if set, raises AbortError.
 
     Returns:
         GenerateResult with text, step history, and aggregated token usage.
@@ -116,6 +119,12 @@ async def generate(
         response = await client.complete(request)
         total_usage = total_usage + response.usage
         history.append(response.message)
+
+        # Check abort signal after each LLM call
+        if abort_signal is not None and abort_signal.is_set:
+            from attractor_llm.errors import AbortError
+
+            raise AbortError("Generation aborted by signal")
 
         # If no tool calls, return text
         if response.finish_reason != FinishReason.TOOL_CALLS:
@@ -229,11 +238,20 @@ async def stream(
     system: str | None = None,
     temperature: float | None = None,
     provider: str | None = None,
-) -> AsyncIterator[str]:
-    """Stream text generation, yielding chunks as they arrive.
+    abort_signal: Any | None = None,
+) -> StreamResult:
+    """Stream text generation, returning a StreamResult. Spec §4.4.
 
     This is a simple streaming wrapper -- no tool loop. For tool-using
     streams, use generate() which handles the full loop.
+
+    The returned StreamResult supports multiple consumption patterns:
+    - ``async for chunk in result.text_stream:`` for text chunks
+    - ``async for event in result:`` for raw StreamEvents
+    - ``await result.response()`` for the accumulated Response
+
+    For backward compatibility, ``async for chunk in result:`` also
+    yields text chunks (StreamResult implements __aiter__ for str).
 
     Args:
         client: The LLM client with registered adapters.
@@ -242,10 +260,13 @@ async def stream(
         system: Optional system prompt.
         temperature: Optional temperature.
         provider: Optional provider override.
+        abort_signal: Optional abort signal for cancellation.
 
-    Yields:
-        Text chunks as they arrive from the provider.
+    Returns:
+        StreamResult wrapping the live event stream.
     """
+    from attractor_llm.streaming import StreamResult
+
     request = Request(
         model=model,
         provider=provider,
@@ -254,10 +275,8 @@ async def stream(
         temperature=temperature,
     )
 
-    event_stream = await client.stream(request)
-    async for event in event_stream:
-        if event.kind == StreamEventKind.TEXT_DELTA and event.text:
-            yield event.text
+    event_stream = await client.stream(request, abort_signal=abort_signal)
+    return StreamResult(event_stream)
 
 
 async def generate_object(

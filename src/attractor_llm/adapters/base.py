@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from attractor_llm.retry import RetryPolicy
-from attractor_llm.types import Request, Response, StreamEvent
+from attractor_llm.types import AdapterTimeout, Request, Response, StreamEvent
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class ProviderConfig:
     api_key: str
     base_url: str | None = None
     timeout: float = 60.0
+    adapter_timeout: AdapterTimeout | None = None
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     default_headers: dict[str, str] = field(default_factory=dict)
 
