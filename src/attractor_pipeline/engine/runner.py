@@ -89,6 +89,11 @@ class Handler(Protocol):
 # ------------------------------------------------------------------ #
 
 
+def _best_by_weight_then_lexical(edges: list[Edge]) -> Edge:
+    """Select best edge: highest weight, then lexicographic tiebreak on target."""
+    return sorted(edges, key=lambda e: (-e.weight, e.target))[0]
+
+
 def select_edge(
     node: Node,
     result: HandlerResult,
@@ -101,8 +106,8 @@ def select_edge(
     1. Condition match: edges whose condition evaluates to true
     2. Preferred label: edges matching result.preferred_label
     3. Suggested IDs: edges targeting a node in result.suggested_next_ids
-    4. Weight: highest-weight edge among remaining candidates
-    5. Lexical: alphabetically first target node ID (deterministic tiebreak)
+    4. Weight + lexical: highest-weight edge, lexicographic tiebreak on target
+    5. Dead end: all edges have conditions and none matched
 
     Returns None if no outgoing edges exist (terminal node).
     """
@@ -122,7 +127,7 @@ def select_edge(
         e for e in edges if e.condition and evaluate_condition(e.condition, variables)
     ]
     if condition_matches:
-        return condition_matches[0]
+        return _best_by_weight_then_lexical(condition_matches)
 
     # Step 2: Preferred label matching
     if result.preferred_label:
@@ -132,22 +137,21 @@ def select_edge(
             e for e in edges if e.label.replace("&", "").strip().lower() == clean_label.lower()
         ]
         if label_matches:
-            return label_matches[0]
+            return _best_by_weight_then_lexical(label_matches)
 
     # Step 3: Suggested next IDs
     if result.suggested_next_ids:
         id_set = set(result.suggested_next_ids)
         id_matches = [e for e in edges if e.target in id_set]
         if id_matches:
-            return id_matches[0]
+            return _best_by_weight_then_lexical(id_matches)
 
-    # Step 4: Weight (edges already sorted by weight desc from outgoing_edges)
-    # Take unconditional edges (no condition) sorted by weight
+    # Step 4/5: Weight + lexical tiebreak on unconditional edges
     unconditional = [e for e in edges if not e.condition]
     if unconditional:
-        return unconditional[0]
+        return _best_by_weight_then_lexical(unconditional)
 
-    # Step 5: If all edges have conditions and none matched, this is a dead end.
+    # All edges have conditions and none matched -- dead end.
     # Returning a false-condition edge would silently violate the graph author's guards.
     return None
 
@@ -271,10 +275,7 @@ def _check_goal_gate(
     redirect_count += 1
 
     # Circuit breaker (Spec §3.4 + Issue 2 design)
-    if (
-        graph.max_goal_gate_redirects > 0
-        and redirect_count >= graph.max_goal_gate_redirects
-    ):
+    if graph.max_goal_gate_redirects > 0 and redirect_count >= graph.max_goal_gate_redirects:
         return (
             "fail",
             redirect_count,
@@ -485,8 +486,13 @@ async def run_pipeline(
         # Exit nodes handle their own goal gate below.
         if current_node.shape != "Msquare" and current_node.goal_gate:
             action, goal_gate_redirect_count, payload = _check_goal_gate(
-                current_node, result, ctx, graph,
-                goal_gate_redirect_count, start_time, completed_nodes,
+                current_node,
+                result,
+                ctx,
+                graph,
+                goal_gate_redirect_count,
+                start_time,
+                completed_nodes,
             )
             if action == "fail":
                 return payload  # type: ignore[return-value]
@@ -502,8 +508,13 @@ async def run_pipeline(
             # Goal gate check (Spec §3.4 + Issue 2 circuit breaker)
             if current_node.goal_gate:
                 action, goal_gate_redirect_count, payload = _check_goal_gate(
-                    current_node, result, ctx, graph,
-                    goal_gate_redirect_count, start_time, completed_nodes,
+                    current_node,
+                    result,
+                    ctx,
+                    graph,
+                    goal_gate_redirect_count,
+                    start_time,
+                    completed_nodes,
                 )
                 if action == "fail":
                     return payload  # type: ignore[return-value]

@@ -134,6 +134,30 @@ async def generate(
                 total_usage=total_usage,
             )
 
+        # Item #6: max_rounds=0 means no automatic tool execution (Spec §4.3)
+        if max_rounds == 0:
+            steps.append(StepResult(response=response))
+            return GenerateResult(
+                text=response.text or "",
+                steps=steps,
+                total_usage=total_usage,
+            )
+
+        # Item #5: Passive tools (no execute handler) return to caller (Spec §5.5)
+        has_passive = False
+        for tc in response.tool_calls:
+            matched = _find_tool(tools, tc.name or "")
+            if matched is not None and not matched.execute:
+                has_passive = True
+                break
+        if has_passive:
+            steps.append(StepResult(response=response))
+            return GenerateResult(
+                text=response.text or "",
+                steps=steps,
+                total_usage=total_usage,
+            )
+
         # Execute tool calls in parallel (Spec §5.7)
         async def _exec_one(tc: ContentPart) -> tuple[ContentPart, str, bool]:
             """Execute a single tool call, return (tool_call, output, is_error)."""
@@ -167,9 +191,7 @@ async def generate(
                     raise r
                 if isinstance(r, BaseException):
                     tc = response.tool_calls[i]
-                    final_results.append(
-                        (tc, f"{type(r).__name__}: {r}", True)
-                    )
+                    final_results.append((tc, f"{type(r).__name__}: {r}", True))
                 else:
                     final_results.append(r)
             exec_results = final_results
@@ -266,7 +288,7 @@ async def generate_object(
         Parsed JSON object.
 
     Raises:
-        ValueError: If the response is not valid JSON.
+        NoObjectGeneratedError: If the response is not valid JSON.
     """
     schema_instruction = ""
     if schema:
@@ -304,7 +326,11 @@ async def generate_object(
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Response is not valid JSON: {e}\nResponse was: {text[:500]}") from e
+        from attractor_llm.errors import NoObjectGeneratedError
+
+        raise NoObjectGeneratedError(
+            f"Response is not valid JSON: {e}\nResponse was: {text[:500]}"
+        ) from e
 
 
 def _find_tool(tools: list[Tool], name: str) -> Tool | None:

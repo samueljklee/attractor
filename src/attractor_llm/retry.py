@@ -93,6 +93,8 @@ async def retry_with_policy(
 
             # Honor Retry-After from rate limit responses (Spec §6.6)
             if isinstance(exc, RateLimitError) and exc.retry_after is not None:
+                if exc.retry_after > policy.max_delay:
+                    raise  # Retry-After exceeds max_delay, don't wait
                 delay = max(delay, exc.retry_after)
 
             if on_retry is not None:
