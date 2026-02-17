@@ -10,7 +10,6 @@ Spec reference: attractor-spec §4.5.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -109,35 +108,10 @@ class CodergenHandler:
                 context[f"codergen.{node.id}.output"] = result.output
             handler_result = result
 
-        # Write per-node artifact files (Spec §5.6)
-        if logs_root is not None:
-            try:
-                # Sanitize node.id to prevent path traversal (defense-in-depth)
-                safe_id = node.id.replace("/", "_").replace("\\", "_").replace("..", "_")
-                node_dir = Path(logs_root) / safe_id
-                node_dir.mkdir(parents=True, exist_ok=True)
-
-                # prompt.md -- the expanded prompt sent to the LLM
-                (node_dir / "prompt.md").write_text(prompt, encoding="utf-8")
-
-                # response.md -- the LLM response text
-                (node_dir / "response.md").write_text(handler_result.output or "", encoding="utf-8")
-
-                # status.json -- the handler result metadata
-                status_data = {
-                    "node_id": node.id,
-                    "status": handler_result.status.value,
-                    "preferred_label": handler_result.preferred_label,
-                    "failure_reason": handler_result.failure_reason,
-                    "notes": handler_result.notes,
-                }
-                (node_dir / "status.json").write_text(
-                    json.dumps(status_data, indent=2), encoding="utf-8"
-                )
-            except Exception:  # noqa: BLE001
-                # Artifact writing is observability, not core logic.
-                # Don't let I/O errors tank the pipeline.
-                pass
+        # Store expanded prompt for engine-level artifact writing (Spec §5.6).
+        # The engine writes artifacts for ALL nodes; we just stash the
+        # LLM-expanded prompt here so the engine can include it.
+        context[f"_artifact_prompt.{node.id}"] = prompt
 
         return handler_result
 
