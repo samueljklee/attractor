@@ -34,8 +34,10 @@ from attractor_llm.generate import generate, generate_object, stream
 from attractor_llm.retry import RetryPolicy, retry_with_policy
 from attractor_llm.streaming import StreamAccumulator
 from attractor_llm.types import (
+    AudioData,
     ContentPart,
     ContentPartKind,
+    DocumentData,
     FinishReason,
     GenerateResult,
     ImageData,
@@ -61,6 +63,8 @@ __all__ = [
     "Role",
     "ContentPartKind",
     "ContentPart",
+    "AudioData",
+    "DocumentData",
     "ImageData",
     "Message",
     "Tool",

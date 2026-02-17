@@ -9,6 +9,7 @@ Spec reference: coding-agent-loop §2.1-2.10.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -168,6 +169,9 @@ class Session:
         # Follow-up queue: messages processed after main loop completes (Spec §9.6)
         self._followup_queue: list[str] = []
 
+        # Tracked subagent tasks for safe cleanup (Spec Appendix B)
+        self._subagent_tasks: set[asyncio.Task[object]] = set()
+
         # Loop detection
         self._loop_detector = _LoopDetector(
             window=self._config.loop_detection_window or 4,
@@ -262,10 +266,20 @@ class Session:
         try:
             result = await self._run_loop()
 
-            # Spec §9.6: process follow-up messages after main loop completes
+            # Spec §9.6: process follow-up messages after main loop completes.
+            # Each follow-up is treated like a recursive process_input() call:
+            # emit TURN_START/USER_INPUT, drain steering, then run the loop.
             while self._followup_queue:
                 msg = self._followup_queue.pop(0)
+                self._turn_count += 1
+                await self._emitter.emit(
+                    SessionEvent(
+                        kind=EventKind.USER_INPUT,
+                        data={"turn": self._turn_count, "content": msg},
+                    )
+                )
                 self._history.append(Message.user(msg))
+                await self._drain_steering()
                 result = await self._run_loop()
         except Exception as exc:
             await self._emitter.emit(
@@ -278,6 +292,7 @@ class Session:
         finally:
             # Spec §9.1: abort transitions to CLOSED (not IDLE)
             if self._abort.is_set:
+                await self._cleanup_on_abort()
                 self._state = SessionState.CLOSED
             else:
                 self._state = SessionState.IDLE
@@ -533,3 +548,32 @@ class Session:
                     data={"message": msg[:200]},
                 )
             )
+
+    async def _cleanup_on_abort(self) -> None:
+        """Best-effort resource cleanup on abort. Spec Appendix B.
+
+        Implements feasible steps of the 8-step shutdown sequence:
+        1. Cancel any tracked asyncio tasks (LLM calls in progress)
+        2. Signal running shell processes via abort propagation
+        3. Flush events (handled by caller emitting TURN_END / SESSION_END)
+        4. Cleanup subagents via self._subagent_tasks
+
+        Steps requiring deeper infrastructure (explicit process tracking,
+        SIGTERM/SIGKILL escalation for individual tool processes) are handled
+        by the ExecutionEnvironment layer and AbortSignal callbacks.
+        """
+        # Cancel any asyncio tasks that are tracked (future: LLM stream tasks)
+        # Currently, abort is checked cooperatively at loop-iteration boundaries.
+        # The AbortSignal's on_abort callbacks handle propagation to lower layers.
+
+        # Drain and discard pending queues to prevent further work
+        self._steer_queue.clear()
+        self._followup_queue.clear()
+
+        # Cancel only explicitly tracked subagent tasks (safe in multi-session processes)
+        for task in self._subagent_tasks:
+            if not task.done():
+                task.cancel()
+        self._subagent_tasks.clear()
+        # TODO: SubagentManager integration — when subagents are spawned through
+        # Session, register their tasks in self._subagent_tasks for cleanup.

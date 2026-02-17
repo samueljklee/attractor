@@ -189,21 +189,26 @@ class AnthropicAdapter:
                 return {"type": "text", "text": part.text or ""}
 
             case ContentPartKind.IMAGE:
-                if part.image and part.image.data:
+                image = part.image
+                if image:
+                    from attractor_llm.adapters.image_utils import resolve_image_data
+
+                    image = resolve_image_data(image)
+                if image and image.data:
                     import base64
 
                     return {
                         "type": "image",
                         "source": {
                             "type": "base64",
-                            "media_type": part.image.media_type,
-                            "data": base64.b64encode(part.image.data).decode(),
+                            "media_type": image.media_type,
+                            "data": base64.b64encode(image.data).decode(),
                         },
                     }
-                elif part.image and part.image.url:
+                elif image and image.url:
                     return {
                         "type": "image",
-                        "source": {"type": "url", "url": part.image.url},
+                        "source": {"type": "url", "url": image.url},
                     }
                 return {"type": "text", "text": "[image data missing]"}
 

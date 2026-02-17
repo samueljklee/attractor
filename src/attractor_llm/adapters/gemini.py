@@ -192,20 +192,25 @@ class GeminiAdapter:
                 return {"text": part.text or ""}
 
             case ContentPartKind.IMAGE:
-                if part.image and part.image.data:
+                image = part.image
+                if image:
+                    from attractor_llm.adapters.image_utils import resolve_image_data
+
+                    image = resolve_image_data(image)
+                if image and image.data:
                     import base64
 
                     return {
                         "inlineData": {
-                            "mimeType": part.image.media_type,
-                            "data": base64.b64encode(part.image.data).decode(),
+                            "mimeType": image.media_type,
+                            "data": base64.b64encode(image.data).decode(),
                         },
                     }
-                elif part.image and part.image.url:
+                elif image and image.url:
                     return {
                         "fileData": {
-                            "mimeType": part.image.media_type,
-                            "fileUri": part.image.url,
+                            "mimeType": image.media_type,
+                            "fileUri": image.url,
                         },
                     }
                 return None
