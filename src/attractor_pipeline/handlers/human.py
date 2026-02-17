@@ -144,11 +144,11 @@ class CallbackInterviewer:
 
 
 class QueueInterviewer:
-    """Reads from a pre-filled answer queue. Spec §6, §11.8.
+    """Reads from a pre-filled answer queue. Spec §6, §6.4, §11.8.
 
     Designed for deterministic testing: supply a list of answers
     up front and they are returned in order for each ``ask()`` call.
-    Raises ``IndexError`` when the queue is exhausted.
+    Returns ``"SKIPPED"`` when the queue is exhausted (Spec §6.4).
     """
 
     def __init__(self, answers: list[str]) -> None:
@@ -163,7 +163,7 @@ class QueueInterviewer:
         question_type: QuestionType | None = None,
     ) -> str:
         if self._index >= len(self._answers):
-            raise IndexError("QueueInterviewer: no more answers in queue")
+            return "SKIPPED"
         answer = self._answers[self._index]
         self._index += 1
         return answer

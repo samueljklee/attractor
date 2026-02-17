@@ -45,7 +45,7 @@ async def spawn_subagent(
     prompt: str,
     *,
     parent_depth: int = 0,
-    max_depth: int = 3,
+    max_depth: int = 1,
     model: str | None = None,
     provider: str | None = None,
     system_prompt: str | None = None,

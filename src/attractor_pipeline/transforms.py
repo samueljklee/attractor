@@ -20,6 +20,7 @@ when the full context is known upfront.
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Protocol, runtime_checkable
 
 from attractor_pipeline.graph import Graph
@@ -76,8 +77,12 @@ class VariableExpansionTransform:
         self._context = context
 
     def apply(self, graph: Graph) -> Graph:
-        """Expand variables in every node's prompt attribute."""
-        for node in graph.nodes.values():
+        """Expand variables in every node's prompt attribute.
+
+        Deep-copies the graph first to avoid mutating the input (Spec §9.1).
+        """
+        new_graph = copy.deepcopy(graph)
+        for node in new_graph.nodes.values():
             if node.prompt:
                 node.prompt = expand_variables(node.prompt, self._context, undefined="keep")
-        return graph
+        return new_graph

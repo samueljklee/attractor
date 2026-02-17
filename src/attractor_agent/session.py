@@ -77,6 +77,9 @@ class SessionConfig:
     tool_output_limits: dict[str, int] | None = None
     tool_line_limits: dict[str, int] | None = None
 
+    # Shell command timeout ceiling (Spec §2.2)
+    max_command_timeout_ms: int = 600_000  # 10 minutes
+
     # Execution environment: "local" (default) or "docker"
     environment: str = "local"
     docker_image: str = "python:3.12-slim"

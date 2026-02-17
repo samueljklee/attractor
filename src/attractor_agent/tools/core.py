@@ -51,6 +51,20 @@ def get_environment() -> ExecutionEnvironment:
 
 
 # ------------------------------------------------------------------ #
+# Shell command timeout ceiling (Spec §2.2)
+# ------------------------------------------------------------------ #
+
+# max_command_timeout_ms = 600_000 (10 minutes) expressed in seconds.
+_max_command_timeout_s: int = 600
+
+
+def set_max_command_timeout(ms: int) -> None:
+    """Override the maximum shell command timeout (in milliseconds)."""
+    global _max_command_timeout_s  # noqa: PLW0603
+    _max_command_timeout_s = max(1, ms // 1000)
+
+
+# ------------------------------------------------------------------ #
 # Security: Path confinement
 # ------------------------------------------------------------------ #
 
@@ -382,6 +396,9 @@ async def _shell(
     """
     # timeout_ms takes precedence (Spec §4.2), converted ms→s with ceiling
     effective_timeout: int = max(1, -(-timeout_ms // 1000)) if timeout_ms is not None else timeout
+
+    # Clamp to max_command_timeout (Spec §2.2)
+    effective_timeout = min(effective_timeout, _max_command_timeout_s)
 
     # Security: check deny-list
     blocked = _check_shell_command(command)

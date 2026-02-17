@@ -2,7 +2,7 @@
 
 Enables a parent agent session to spawn subagents that run in the
 background and communicate with them interactively via send_input,
-wait_agent, and close_agent tools.
+wait, and close_agent tools.
 
 Unlike the fire-and-forget model in subagent.py, interactive subagents
 run as background asyncio tasks and support mid-execution message
@@ -73,7 +73,7 @@ class SubagentManager:
         prompt: str,
         *,
         parent_depth: int = 0,
-        max_depth: int = 3,
+        max_depth: int = 1,
         model: str | None = None,
         provider: str | None = None,
         system_prompt: str | None = None,
@@ -206,7 +206,7 @@ def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
     async def _send_input(agent_id: str, message: str) -> str:
         return manager.send_input(agent_id, message)
 
-    async def _wait_agent(agent_id: str) -> str:
+    async def _wait(agent_id: str) -> str:
         return await manager.wait_for_output(agent_id)
 
     async def _close_agent(agent_id: str) -> str:
@@ -236,8 +236,8 @@ def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
         execute=_send_input,
     )
 
-    wait_agent_tool = Tool(
-        name="wait_agent",
+    wait_tool = Tool(
+        name="wait",
         description=(
             "Wait for an interactive subagent to complete and return "
             "its final output. The agent is removed from tracking "
@@ -253,7 +253,7 @@ def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
             },
             "required": ["agent_id"],
         },
-        execute=_wait_agent,
+        execute=_wait,
     )
 
     close_agent_tool = Tool(
@@ -275,4 +275,4 @@ def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
         execute=_close_agent,
     )
 
-    return [send_input_tool, wait_agent_tool, close_agent_tool]
+    return [send_input_tool, wait_tool, close_agent_tool]

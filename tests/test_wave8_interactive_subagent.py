@@ -1,6 +1,6 @@
 """Tests for Wave 8: Interactive subagent tools (Spec §2.8, §9.9).
 
-Validates SubagentManager tracking, send_input/wait_agent/close_agent
+Validates SubagentManager tracking, send_input/wait/close_agent
 operations, and Tool registration via create_interactive_tools().
 """
 
@@ -267,7 +267,7 @@ class TestInteractiveTools:
         tools = create_interactive_tools(manager)
         assert len(tools) == 3
         names = {t.name for t in tools}
-        assert names == {"send_input", "wait_agent", "close_agent"}
+        assert names == {"send_input", "wait", "close_agent"}
 
     def test_tools_have_execute_handlers(self):
         manager = SubagentManager()
@@ -286,8 +286,8 @@ class TestInteractiveTools:
         assert "message" in send.parameters["properties"]
         assert send.parameters["required"] == ["agent_id", "message"]
 
-        # wait_agent requires agent_id
-        wait = tool_map["wait_agent"]
+        # wait requires agent_id
+        wait = tool_map["wait"]
         assert "agent_id" in wait.parameters["properties"]
         assert wait.parameters["required"] == ["agent_id"]
 
@@ -307,11 +307,11 @@ class TestInteractiveTools:
         assert "sent" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_wait_agent_tool_delegates(self):
+    async def test_wait_tool_delegates(self):
         manager = SubagentManager()
         _register_fake_agent(manager, "agent-001", result="final answer")
         tools = create_interactive_tools(manager)
-        wait_tool = next(t for t in tools if t.name == "wait_agent")
+        wait_tool = next(t for t in tools if t.name == "wait")
 
         result = await wait_tool.execute(agent_id="agent-001")
         assert result == "final answer"

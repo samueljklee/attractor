@@ -103,19 +103,21 @@ class TestQueueInterviewer:
         assert await interviewer.ask("q3") == "third"
 
     @pytest.mark.anyio
-    async def test_raises_when_exhausted(self) -> None:
+    async def test_returns_skipped_when_exhausted(self) -> None:
+        """Spec §6.4: returns 'SKIPPED' when queue is empty."""
         interviewer = QueueInterviewer(["only-one"])
         await interviewer.ask("q1")
 
-        with pytest.raises(IndexError, match="no more answers"):
-            await interviewer.ask("q2")
+        result = await interviewer.ask("q2")
+        assert result == "SKIPPED"
 
     @pytest.mark.anyio
-    async def test_empty_queue_raises_immediately(self) -> None:
+    async def test_empty_queue_returns_skipped_immediately(self) -> None:
+        """Spec §6.4: empty queue returns 'SKIPPED' on first ask."""
         interviewer = QueueInterviewer([])
 
-        with pytest.raises(IndexError, match="no more answers"):
-            await interviewer.ask("q1")
+        result = await interviewer.ask("q1")
+        assert result == "SKIPPED"
 
     @pytest.mark.anyio
     async def test_ignores_options_and_node_id(self) -> None:
