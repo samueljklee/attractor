@@ -752,7 +752,11 @@ class TestSessionEnvironmentContext:
             )
             # The enriched system prompt includes platform info (e.g., 'linux')
             assert response, "Session should return a non-empty response"
-            assert len(response) > 5, f"Response too short: {response}"
+            response_lower = response.lower()
+            assert any(
+                term in response_lower
+                for term in ("linux", "darwin", "windows", "macos", "directory", "/", "platform")
+            ), f"Response should reference environment context, got: {response}"
         finally:
             await session.close()
 

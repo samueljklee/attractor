@@ -25,6 +25,9 @@ class EventKind(StrEnum):
     TURN_START = "turn.start"
     TURN_END = "turn.end"
 
+    # User input (follow-up messages processed after main loop)
+    USER_INPUT = "user.input"
+
     # Assistant output
     ASSISTANT_TEXT = "assistant.text"
     ASSISTANT_TEXT_DELTA = "assistant.text_delta"

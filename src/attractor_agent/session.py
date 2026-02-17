@@ -9,6 +9,7 @@ Spec reference: coding-agent-loop §2.1-2.10.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -168,6 +169,9 @@ class Session:
         # Follow-up queue: messages processed after main loop completes (Spec §9.6)
         self._followup_queue: list[str] = []
 
+        # Tracked subagent tasks for safe cleanup (Spec Appendix B)
+        self._subagent_tasks: set[asyncio.Task[object]] = set()
+
         # Loop detection
         self._loop_detector = _LoopDetector(
             window=self._config.loop_detection_window or 4,
@@ -270,8 +274,8 @@ class Session:
                 self._turn_count += 1
                 await self._emitter.emit(
                     SessionEvent(
-                        kind=EventKind.TURN_START,
-                        data={"turn": self._turn_count, "prompt": msg[:200]},
+                        kind=EventKind.USER_INPUT,
+                        data={"turn": self._turn_count, "content": msg},
                     )
                 )
                 self._history.append(Message.user(msg))
@@ -552,14 +556,12 @@ class Session:
         1. Cancel any tracked asyncio tasks (LLM calls in progress)
         2. Signal running shell processes via abort propagation
         3. Flush events (handled by caller emitting TURN_END / SESSION_END)
-        4. Cleanup subagents (if SubagentManager is attached)
+        4. Cleanup subagents via self._subagent_tasks
 
         Steps requiring deeper infrastructure (explicit process tracking,
         SIGTERM/SIGKILL escalation for individual tool processes) are handled
         by the ExecutionEnvironment layer and AbortSignal callbacks.
         """
-        import asyncio
-
         # Cancel any asyncio tasks that are tracked (future: LLM stream tasks)
         # Currently, abort is checked cooperatively at loop-iteration boundaries.
         # The AbortSignal's on_abort callbacks handle propagation to lower layers.
@@ -568,7 +570,10 @@ class Session:
         self._steer_queue.clear()
         self._followup_queue.clear()
 
-        # If a SubagentManager is registered, close all tracked subagents
-        for task in asyncio.all_tasks():
-            if task.get_name().startswith("subagent-") and not task.done():
+        # Cancel only explicitly tracked subagent tasks (safe in multi-session processes)
+        for task in self._subagent_tasks:
+            if not task.done():
                 task.cancel()
+        self._subagent_tasks.clear()
+        # TODO: SubagentManager integration — when subagents are spawned through
+        # Session, register their tasks in self._subagent_tasks for cleanup.

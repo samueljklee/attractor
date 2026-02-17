@@ -111,10 +111,10 @@ def _register_failing_agent(
 
 
 class TestFollowUpEventsAndSteering:
-    """follow_up() must emit TURN_START and call _drain_steering per §2.5."""
+    """follow_up() must emit USER_INPUT and call _drain_steering per §2.5."""
 
-    async def test_follow_up_emits_turn_start(self):
-        """Each follow-up message triggers a TURN_START event."""
+    async def test_follow_up_emits_user_input(self):
+        """Each follow-up message triggers a USER_INPUT event (not TURN_START)."""
         events: list[SessionEvent] = []
 
         responses = [
@@ -127,11 +127,14 @@ class TestFollowUpEventsAndSteering:
 
         await session.submit("initial prompt")
 
+        # Initial submit emits TURN_START; follow-up emits USER_INPUT
         turn_starts = [e for e in events if e.kind == EventKind.TURN_START]
-        # One for the initial submit, one for the follow-up
-        assert len(turn_starts) == 2
-        # Second TURN_START should reference the follow-up prompt
-        assert turn_starts[1].data["prompt"] == "check the output"
+        assert len(turn_starts) == 1
+
+        user_inputs = [e for e in events if e.kind == EventKind.USER_INPUT]
+        assert len(user_inputs) == 1
+        # USER_INPUT carries full content (no truncation) under "content" key
+        assert user_inputs[0].data["content"] == "check the output"
 
     async def test_follow_up_increments_turn_count(self):
         """Each follow-up increments the turn counter."""
@@ -193,8 +196,8 @@ class TestFollowUpEventsAndSteering:
         assert "initial prompt" in user_texts
         assert "my follow-up" in user_texts
 
-    async def test_multiple_follow_ups_each_emit_turn_start(self):
-        """Multiple follow-ups each get their own TURN_START."""
+    async def test_multiple_follow_ups_each_emit_user_input(self):
+        """Multiple follow-ups each get their own USER_INPUT event."""
         events: list[SessionEvent] = []
 
         responses = [
@@ -209,8 +212,13 @@ class TestFollowUpEventsAndSteering:
 
         await session.submit("start")
 
+        # Only the initial submit emits TURN_START
         turn_starts = [e for e in events if e.kind == EventKind.TURN_START]
-        assert len(turn_starts) == 3  # initial + 2 follow-ups
+        assert len(turn_starts) == 1
+
+        # Each follow-up emits USER_INPUT
+        user_inputs = [e for e in events if e.kind == EventKind.USER_INPUT]
+        assert len(user_inputs) == 2
 
 
 # ================================================================== #
@@ -266,13 +274,13 @@ class TestAbortCleanup:
 
         assert EventKind.SESSION_END in events
 
-    async def test_cleanup_cancels_subagent_tasks(self):
-        """Abort cancels asyncio tasks with subagent- prefix."""
+    async def test_cleanup_cancels_tracked_subagent_tasks(self):
+        """Abort cancels only tasks registered in session._subagent_tasks."""
         abort = AbortSignal()
         client = Client()
         session = Session(client=client, abort_signal=abort)
 
-        # Create a long-running task named like a subagent
+        # Create a long-running task and register it with the session
         cancelled = False
 
         async def _long_running():
@@ -283,6 +291,19 @@ class TestAbortCleanup:
                 cancelled = True
 
         task = asyncio.create_task(_long_running(), name="subagent-agent-abc")
+        session._subagent_tasks.add(task)
+
+        # Create an untracked task that should NOT be cancelled
+        untracked_cancelled = False
+
+        async def _untracked():
+            nonlocal untracked_cancelled
+            try:
+                await asyncio.sleep(100)
+            except asyncio.CancelledError:
+                untracked_cancelled = True
+
+        untracked_task = asyncio.create_task(_untracked(), name="subagent-other")
 
         # Now abort and submit to trigger cleanup
         abort.set()
@@ -291,7 +312,13 @@ class TestAbortCleanup:
         # Give the event loop a tick to process cancellation
         await asyncio.sleep(0.01)
 
-        assert cancelled or task.cancelled()
+        assert cancelled or task.cancelled(), "Tracked subagent task should be cancelled"
+        assert not untracked_cancelled, "Untracked task should NOT be cancelled"
+        assert len(session._subagent_tasks) == 0, "Task set should be cleared after cleanup"
+
+        # Clean up the untracked task
+        untracked_task.cancel()
+        await asyncio.sleep(0.01)
 
 
 # ================================================================== #
