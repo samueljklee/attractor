@@ -740,8 +740,8 @@ class TestSessionEnvironmentContext:
             model=ANTHROPIC_MODEL,
             provider="anthropic",
             system_prompt="You are a coding assistant.",
-            max_turns=1,
-            max_tool_rounds_per_turn=0,
+            max_turns=2,
+            max_tool_rounds_per_turn=5,
         )
 
         session = Session(client=anthropic_client, config=config, tools=[])
