@@ -11,8 +11,8 @@
 #   Stage 2 "review-and-converge"  - Convergence loop: review -> fix -> re-review
 #                                    (max 3 iterations, no approval)
 #   Stage 3 "ship"                 - Commit, push, create PR via foundation:git-ops
+#                                    (approval gate after PR created)
 #   Stage 4 "merge"               - Squash-merge after human approval
-#                                    (approval gate before merge)
 #
 # The review-and-converge stage uses a while loop with while_steps to run
 # up to 3 review iterations. Each iteration: correctness review (Sonnet) +
@@ -36,6 +36,17 @@
 # =============================================================================
 # CHANGELOG
 # =============================================================================
+#
+# v1.2.0 (2026-02-16):
+#   - FIX: Move approval gate from stage "merge" to stage "ship"
+#     * ROOT CAUSE: Approval gates fire AFTER a stage's steps complete, not
+#       before. The v1.1.0 fix placed the gate on "merge", which meant it fired
+#       before merge's steps but also before the user could review the PR --
+#       the correct location is on "ship" so it fires after push_output and
+#       pr_output are available, pausing before merge runs.
+#     * FIX: Moved approval block from stage 4 "merge" to stage 3 "ship"
+#   - FIX: Add set -euo pipefail to generate-diff and re-generate-diff bash steps
+#     * These multi-command bash steps lacked fail-fast shell options
 #
 # v1.1.0 (2026-02-16):
 #   - CRITICAL FIX: Moved approval gate from stage "ship" to stage "merge"
@@ -62,7 +73,7 @@
 
 name: "wave-implementation"
 description: "Implement a wave of spec compliance fixes: branch, implement, test, review with convergence loop, and ship as PR"
-version: "1.1.0"
+version: "1.2.0"
 tags: ["attractor", "spec-compliance", "implementation", "wave"]
 
 context:
@@ -228,6 +239,7 @@ stages:
       - id: "generate-diff"
         type: "bash"
         command: |
+          set -euo pipefail
           git diff HEAD > /tmp/wave-diff.patch
           echo "=== Diff Stats ==="
           git diff --stat HEAD
@@ -428,6 +440,7 @@ stages:
             condition: "{{review_synthesis.verdict}} == 'REQUEST_CHANGES'"
             type: "bash"
             command: |
+              set -euo pipefail
               git diff HEAD > /tmp/wave-diff.patch
               echo "=== Diff Stats ==="
               git diff --stat HEAD
@@ -442,7 +455,7 @@ stages:
         break_when: "{{converged}} == 'true'"
 
   # ===========================================================================
-  # Stage 3: Ship
+  # Stage 3: Ship  (approval gate fires after this stage's steps)
   # ===========================================================================
   - name: "ship"
     steps:
@@ -491,10 +504,6 @@ stages:
           backoff: "exponential"
           initial_delay: 5
 
-  # ===========================================================================
-  # Stage 4: Merge  (approval gate fires before this stage's steps)
-  # ===========================================================================
-  - name: "merge"
     approval:
       required: true
       prompt: |
@@ -507,6 +516,11 @@ stages:
         Deny to leave the PR open for manual handling.
       timeout: 0
       default: "deny"
+
+  # ===========================================================================
+  # Stage 4: Merge
+  # ===========================================================================
+  - name: "merge"
     steps:
       # -----------------------------------------------------------------------
       # Step: Squash-merge PR and return to base branch

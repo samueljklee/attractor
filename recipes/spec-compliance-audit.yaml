@@ -57,7 +57,6 @@ tags: ["audit", "spec-compliance", "attractor", "gap-analysis", "wave-plan"]
 
 context:
   spec_repo_base: "https://raw.githubusercontent.com/strongdm/attractor/main"
-  impl_dir: "."
 
 stages:
   # ===========================================================================
