@@ -1,0 +1,364 @@
+# =============================================================================
+# Recipe 1: Spec Compliance Audit
+# =============================================================================
+#
+# Fetches the latest strongdm/attractor NL specs from GitHub, audits the
+# implementation against every Definition-of-Done checklist, and produces a
+# unified gap report with a prioritized wave plan.
+#
+# Staged recipe with 2 stages:
+#   Stage 1 "audit"         - Fetch specs, audit each module, synthesize report
+#                             (approval gate after stage completes)
+#   Stage 2 "wave-planning" - Group gaps into implementation waves, write plan,
+#                             clean up temp files
+#
+# Provider diversity: each audit step uses a different LLM provider to reduce
+# single-model blind spots. Each provider_preferences has a fallback chain.
+#
+# Typical runtime: 10-20 minutes (excluding approval wait)
+# Required agents: foundation:zen-architect
+#
+# Usage:
+#   amplifier tool invoke recipes operation=execute \
+#     recipe_path=recipes/spec-compliance-audit.yaml
+#
+# =============================================================================
+# CHANGELOG
+# =============================================================================
+#
+# v1.1.0 (2026-02-16):
+#   - CRITICAL FIX: Moved approval gate from stage 2 to stage 1
+#     * ROOT CAUSE: Approval gates fire before a stage's steps run, so having
+#       the gate on stage 2 meant wave-planning ran unconditionally before
+#       the user reviewed anything
+#     * FIX: Gate now on stage 1 "audit" - fires after audit completes,
+#       before wave-planning starts
+#   - IMPROVEMENT: Changed audit agents from foundation:explorer to
+#     foundation:zen-architect with mode REVIEW for analytical judgment
+#     * THE KEY INSIGHT: Explorer is for reconnaissance; zen-architect in
+#       REVIEW mode provides the PASS/PARTIAL/FAIL verdicts needed here
+#   - IMPROVEMENT: Added provider fallback chains to all provider_preferences
+#   - IMPROVEMENT: Added retry with exponential backoff to fetch-specs step
+#   - IMPROVEMENT: Added cleanup step to remove /tmp spec files after completion
+#
+# v1.0.0 (2026-02-16):
+#   - Initial recipe implementation
+#     * 2-stage workflow: audit + wave-planning
+#     * 3 parallel-independent audits with provider diversity
+#     * Bash step for deterministic spec fetching
+#     * Approval gate before wave plan file write
+#
+# =============================================================================
+
+name: "spec-compliance-audit"
+description: "Fetch attractor NL specs, audit implementation against all DoD checklists, produce gap report with wave plan"
+version: "1.1.0"
+tags: ["audit", "spec-compliance", "attractor", "gap-analysis", "wave-plan"]
+
+context:
+  spec_repo_base: "https://raw.githubusercontent.com/strongdm/attractor/main"
+  impl_dir: "."
+
+stages:
+  # ===========================================================================
+  # Stage 1: Audit  (approval gate fires after this stage completes)
+  # ===========================================================================
+  - name: "audit"
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1: Fetch all 3 spec files from GitHub raw URLs to /tmp/
+      # -----------------------------------------------------------------------
+      - id: "fetch-specs"
+        type: "bash"
+        command: |
+          set -euo pipefail
+
+          base="{{spec_repo_base}}"
+
+          curl -fsSL "${base}/docs/specs/unified-llm-spec.md"       -o /tmp/unified-llm-spec.md
+          curl -fsSL "${base}/docs/specs/coding-agent-loop-spec.md"  -o /tmp/coding-agent-loop-spec.md
+          curl -fsSL "${base}/docs/specs/attractor-spec.md"          -o /tmp/attractor-spec.md
+
+          echo "Fetched specs:"
+          wc -l /tmp/unified-llm-spec.md /tmp/coding-agent-loop-spec.md /tmp/attractor-spec.md
+        output: "fetch_result"
+        timeout: 60
+        retry:
+          max_attempts: 3
+          backoff: "exponential"
+          initial_delay: 5
+
+      # -----------------------------------------------------------------------
+      # Step 2: Audit unified-llm module against its DoD
+      # -----------------------------------------------------------------------
+      - id: "audit-unified-llm"
+        agent: "foundation:zen-architect"
+        mode: "REVIEW"
+        provider_preferences:
+          - provider: anthropic
+            model: claude-sonnet-4-5-*
+          - provider: openai
+            model: o3
+        prompt: |
+          You are a spec-compliance auditor. Your task is to audit the
+          implementation in src/attractor_llm/ against the Definition of Done
+          in the spec file /tmp/unified-llm-spec.md (section 8, "Definition of
+          Done").
+
+          Instructions:
+          1. Read /tmp/unified-llm-spec.md and extract EVERY checklist item
+             from section 8 (DoD).
+          2. For each checklist item, inspect the source files under
+             src/attractor_llm/ to determine compliance.
+          3. Report each item with a verdict:
+             - PASS  : fully implemented and matches spec
+             - PARTIAL: partially implemented or minor gaps
+             - FAIL  : not implemented or significantly divergent
+
+          Output format (for each item):
+            ## <checklist item summary>
+            **Verdict**: PASS | PARTIAL | FAIL
+            **Evidence**: <file paths and line references supporting verdict>
+            **Gap** (if PARTIAL/FAIL): <what is missing or wrong>
+
+          Be thorough. Cite specific files and line numbers.
+        output: "audit_llm"
+        timeout: 900
+
+      # -----------------------------------------------------------------------
+      # Step 3: Audit coding-agent-loop module against its DoD
+      # -----------------------------------------------------------------------
+      - id: "audit-coding-agent"
+        agent: "foundation:zen-architect"
+        mode: "REVIEW"
+        provider_preferences:
+          - provider: openai
+            model: o3
+          - provider: anthropic
+            model: claude-sonnet-4-5-*
+        prompt: |
+          You are a spec-compliance auditor. Your task is to audit the
+          implementation in src/attractor_agent/ against the Definition of Done
+          in the spec file /tmp/coding-agent-loop-spec.md (section 9,
+          "Definition of Done").
+
+          Instructions:
+          1. Read /tmp/coding-agent-loop-spec.md and extract EVERY checklist
+             item from section 9 (DoD).
+          2. For each checklist item, inspect the source files under
+             src/attractor_agent/ to determine compliance.
+          3. Report each item with a verdict:
+             - PASS  : fully implemented and matches spec
+             - PARTIAL: partially implemented or minor gaps
+             - FAIL  : not implemented or significantly divergent
+
+          Output format (for each item):
+            ## <checklist item summary>
+            **Verdict**: PASS | PARTIAL | FAIL
+            **Evidence**: <file paths and line references supporting verdict>
+            **Gap** (if PARTIAL/FAIL): <what is missing or wrong>
+
+          Be thorough. Cite specific files and line numbers.
+        output: "audit_agent"
+        timeout: 900
+
+      # -----------------------------------------------------------------------
+      # Step 4: Audit attractor-pipeline module against its DoD
+      # -----------------------------------------------------------------------
+      - id: "audit-attractor-pipeline"
+        agent: "foundation:zen-architect"
+        mode: "REVIEW"
+        provider_preferences:
+          - provider: google
+            model: gemini-2.5-pro
+          - provider: anthropic
+            model: claude-sonnet-4-5-*
+        prompt: |
+          You are a spec-compliance auditor. Your task is to audit the
+          implementation in src/attractor_pipeline/ against the Definition of
+          Done in the spec file /tmp/attractor-spec.md (section 11, "Definition
+          of Done").
+
+          Instructions:
+          1. Read /tmp/attractor-spec.md and extract EVERY checklist item from
+             section 11 (DoD).
+          2. For each checklist item, inspect the source files under
+             src/attractor_pipeline/ to determine compliance.
+          3. Report each item with a verdict:
+             - PASS  : fully implemented and matches spec
+             - PARTIAL: partially implemented or minor gaps
+             - FAIL  : not implemented or significantly divergent
+
+          Output format (for each item):
+            ## <checklist item summary>
+            **Verdict**: PASS | PARTIAL | FAIL
+            **Evidence**: <file paths and line references supporting verdict>
+            **Gap** (if PARTIAL/FAIL): <what is missing or wrong>
+
+          Be thorough. Cite specific files and line numbers.
+        output: "audit_pipeline"
+        timeout: 900
+
+      # -----------------------------------------------------------------------
+      # Step 5: Synthesize all 3 audits into unified gap report
+      # -----------------------------------------------------------------------
+      - id: "synthesize-report"
+        agent: "foundation:zen-architect"
+        mode: "ANALYZE"
+        depends_on:
+          - "audit-unified-llm"
+          - "audit-coding-agent"
+          - "audit-attractor-pipeline"
+        prompt: |
+          You are a technical program manager. Merge the three spec-compliance
+          audit results below into a single, unified gap report.
+
+          === Unified LLM Audit (src/attractor_llm/) ===
+          {{audit_llm}}
+
+          === Coding Agent Loop Audit (src/attractor_agent/) ===
+          {{audit_agent}}
+
+          === Attractor Pipeline Audit (src/attractor_pipeline/) ===
+          {{audit_pipeline}}
+
+          Produce a report with these sections:
+
+          ## 1. Executive Summary
+          - Total items audited, counts of PASS / PARTIAL / FAIL per module
+          - Overall compliance percentage
+
+          ## 2. FAIL Items (P1 - Critical)
+          For each FAIL item across all modules:
+          - Module, checklist item, gap description, affected files
+
+          ## 3. PARTIAL Items (P2 - Important)
+          For each PARTIAL item across all modules:
+          - Module, checklist item, what remains, affected files
+
+          ## 4. PASS Items (P3 - Complete)
+          Summary list of all passing items grouped by module.
+
+          ## 5. Cross-Cutting Concerns
+          Any patterns or systemic gaps that span multiple modules.
+
+          Be precise. Preserve file paths and line references from the audits.
+        output: "gap_report"
+        timeout: 600
+
+    approval:
+      required: true
+      prompt: |
+        Review gap report. Approve to proceed with wave planning.
+
+        {{gap_report}}
+      timeout: 0
+      default: "deny"
+
+  # ===========================================================================
+  # Stage 2: Wave Planning
+  # ===========================================================================
+  - name: "wave-planning"
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 6: Group gaps into implementation waves
+      # -----------------------------------------------------------------------
+      - id: "create-wave-plan"
+        agent: "foundation:zen-architect"
+        mode: "ARCHITECT"
+        prompt: |
+          Based on this gap report:
+
+          {{gap_report}}
+
+          Create an implementation wave plan. Group all FAIL and PARTIAL items
+          into waves by theme and dependency order.
+
+          Guidelines:
+          - Wave 1: Foundation / blocking items that other work depends on
+          - Wave 2: Core functionality gaps (highest user-facing impact)
+          - Wave 3: Hardening, edge cases, polish
+          - Each wave should be completable in roughly 1-2 days of focused work
+          - Items within a wave should be thematically related
+          - Note dependencies between waves
+
+          Output a structured JSON wave plan with this schema:
+
+          ```json
+          {
+            "generated_at": "<ISO timestamp>",
+            "total_gaps": <number>,
+            "waves": [
+              {
+                "wave": 1,
+                "theme": "<theme name>",
+                "estimated_effort": "<e.g. 1-2 days>",
+                "depends_on": [],
+                "items": [
+                  {
+                    "module": "<attractor_llm | attractor_agent | attractor_pipeline>",
+                    "checklist_item": "<item summary>",
+                    "verdict": "FAIL | PARTIAL",
+                    "priority": "P1 | P2",
+                    "description": "<what needs to be done>",
+                    "affected_files": ["<path>"]
+                  }
+                ]
+              }
+            ]
+          }
+          ```
+
+          Return ONLY the JSON. No markdown fences, no prose.
+        output: "wave_plan"
+        parse_json: true
+        timeout: 600
+
+      # -----------------------------------------------------------------------
+      # Step 7: Write wave plan to file
+      # -----------------------------------------------------------------------
+      - id: "write-plan-file"
+        type: "bash"
+        command: |
+          set -euo pipefail
+          mkdir -p docs/plans
+          printf '%s\n' '{{wave_plan}}' > docs/plans/wave-plan.json.tmp
+          mv docs/plans/wave-plan.json.tmp docs/plans/wave-plan.json
+
+          if [ -s docs/plans/wave-plan.json ]; then
+            echo "Wave plan written: docs/plans/wave-plan.json ($(wc -c < docs/plans/wave-plan.json) bytes)"
+          else
+            echo "ERROR: wave-plan.json is empty" >&2
+            exit 1
+          fi
+        output: "write_result"
+        timeout: 30
+
+      # -----------------------------------------------------------------------
+      # Step 8: Clean up fetched spec files from /tmp
+      # -----------------------------------------------------------------------
+      - id: "cleanup-specs"
+        type: "bash"
+        command: |
+          set -euo pipefail
+          rm -f /tmp/unified-llm-spec.md /tmp/coding-agent-loop-spec.md /tmp/attractor-spec.md
+          echo "Cleaned up spec files from /tmp"
+        output: "cleanup_result"
+        timeout: 30
+
+# =============================================================================
+# Output Summary:
+#
+# After full execution, you will have:
+#   - fetch_result      : Confirmation of spec file downloads
+#   - audit_llm         : DoD audit for src/attractor_llm/
+#   - audit_agent       : DoD audit for src/attractor_agent/
+#   - audit_pipeline    : DoD audit for src/attractor_pipeline/
+#   - gap_report        : Unified gap report with P1/P2/P3 priorities
+#   - wave_plan         : Structured JSON wave plan
+#   - write_result      : Confirmation of file write
+#   - cleanup_result    : Confirmation of /tmp spec file cleanup
+#
+# Artifacts on disk:
+#   - docs/plans/wave-plan.json   (structured wave plan)
+# =============================================================================

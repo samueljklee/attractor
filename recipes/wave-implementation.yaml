@@ -1,0 +1,549 @@
+# =============================================================================
+# Recipe 2: Wave Implementation
+# =============================================================================
+#
+# Takes a wave of spec compliance gaps, implements fixes, tests, gets a
+# multi-perspective review with automated convergence, and ships a PR.
+#
+# Staged recipe with 4 stages:
+#   Stage 1 "implement-and-test"   - Validate specs, branch, extract spec text,
+#                                    implement, test
+#   Stage 2 "review-and-converge"  - Convergence loop: review -> fix -> re-review
+#                                    (max 3 iterations, no approval)
+#   Stage 3 "ship"                 - Commit, push, create PR via foundation:git-ops
+#   Stage 4 "merge"               - Squash-merge after human approval
+#                                    (approval gate before merge)
+#
+# The review-and-converge stage uses a while loop with while_steps to run
+# up to 3 review iterations. Each iteration: correctness review (Sonnet) +
+# simplification review (o3) -> synthesize -> apply must-fix items -> re-diff.
+# Loop exits when synthesis verdict is APPROVE or max iterations reached.
+#
+# The implement-fixes step is the most expensive -- uses Opus 4 with a
+# detailed instruction to read source, make changes, write tests, and run
+# initial pytest.
+#
+# Typical runtime: 30-60 minutes (excluding approval wait)
+# Required agents: foundation:explorer, foundation:modular-builder,
+#                  foundation:zen-architect, foundation:git-ops
+# Required tools:  git, gh (GitHub CLI), uv
+#
+# Usage:
+#   amplifier tool invoke recipes operation=execute \
+#     recipe_path=recipes/wave-implementation.yaml \
+#     context='{"wave_name":"wave1-error-hierarchy","wave_items_description":"..."}'
+#
+# =============================================================================
+# CHANGELOG
+# =============================================================================
+#
+# v1.1.0 (2026-02-16):
+#   - CRITICAL FIX: Moved approval gate from stage "ship" to stage "merge"
+#     * ROOT CAUSE: Approval gates fire before a stage's steps run, so having
+#       the gate on "ship" meant the prompt referenced {{push_output}} and
+#       {{pr_output}} which didn't exist yet
+#     * FIX: Gate now on "merge" - ship creates PR, user reviews, then merge runs
+#   - IMPROVEMENT: Changed commit-and-push and create-pr from bash steps to
+#     foundation:git-ops agent steps for better commit messages and safety checks
+#   - IMPROVEMENT: Added provider fallback chains to all provider_preferences
+#   - IMPROVEMENT: Added retry with exponential backoff to network operations
+#     (commit-and-push, create-pr)
+#   - IMPROVEMENT: Added spec file validation step at start of first stage
+#
+# v1.0.0 (2026-02-16):
+#   - Initial recipe implementation
+#     * 4-stage workflow: implement -> review-converge -> ship -> merge
+#     * While-loop convergence with max 3 review iterations
+#     * Provider diversity: Opus for implementation, Sonnet for correctness
+#       review, o3 for simplification review
+#     * Approval gate between PR creation and merge
+#
+# =============================================================================
+
+name: "wave-implementation"
+description: "Implement a wave of spec compliance fixes: branch, implement, test, review with convergence loop, and ship as PR"
+version: "1.1.0"
+tags: ["attractor", "spec-compliance", "implementation", "wave"]
+
+context:
+  wave_name: ""                # Required: e.g. "wave1-error-hierarchy"
+  wave_items_description: ""   # Required: items to fix with spec section references
+  spec_files_dir: "/tmp"       # Where spec files live (fetched by Recipe 1)
+  base_branch: "main"          # Branch to create feature branch from
+  converged: "false"           # Loop control variable (set by review synthesis)
+
+stages:
+  # ===========================================================================
+  # Stage 1: Implement and Test  (no approval)
+  # ===========================================================================
+  - name: "implement-and-test"
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 0: Validate that spec files exist
+      # -----------------------------------------------------------------------
+      - id: "validate-spec-files"
+        type: "bash"
+        command: |
+          set -euo pipefail
+          missing=0
+          for f in unified-llm-spec.md coding-agent-loop-spec.md attractor-spec.md; do
+            if [ ! -f "{{spec_files_dir}}/$f" ]; then
+              echo "ERROR: Missing spec file: {{spec_files_dir}}/$f" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "Run Recipe 1 (spec-compliance-audit) first to fetch spec files." >&2
+            exit 1
+          fi
+          echo "All spec files present in {{spec_files_dir}}"
+        output: "validation_output"
+        timeout: 30
+
+      # -----------------------------------------------------------------------
+      # Step 1: Create feature branch from base
+      # -----------------------------------------------------------------------
+      - id: "create-branch"
+        type: "bash"
+        command: |
+          set -euo pipefail
+          git checkout {{base_branch}}
+          git pull origin {{base_branch}}
+          git checkout -b feat/{{wave_name}}
+          echo "Created branch feat/{{wave_name}} from {{base_branch}}"
+        env:
+          GIT_EDITOR: "true"
+        output: "branch_output"
+        timeout: 60
+
+      # -----------------------------------------------------------------------
+      # Step 2: Extract verbatim spec text for each wave item
+      # -----------------------------------------------------------------------
+      - id: "extract-spec-text"
+        agent: "foundation:explorer"
+        prompt: |
+          Read the spec files in {{spec_files_dir}} and extract the exact
+          verbatim spec text for each item described below.
+
+          Spec files to read:
+            - {{spec_files_dir}}/unified-llm-spec.md
+            - {{spec_files_dir}}/coding-agent-loop-spec.md
+            - {{spec_files_dir}}/attractor-spec.md
+
+          Wave items to extract requirements for:
+          {{wave_items_description}}
+
+          For each wave item:
+          1. Find the relevant spec section(s) that define the requirement
+          2. Extract the VERBATIM requirement text (exact quotes from the spec)
+          3. Note the spec file name and section number/title
+          4. Identify what "done" looks like according to the spec
+
+          Output format for each item:
+            ## <item name>
+            **Spec file**: <filename>
+            **Section**: <section number and title>
+            **Verbatim requirement**:
+            > <exact text from spec>
+            **Acceptance criteria**: <what the implementation must do>
+        output: "spec_requirements"
+        timeout: 600
+
+      # -----------------------------------------------------------------------
+      # Step 3: Implement all fixes (heavy step -- Opus 4)
+      # -----------------------------------------------------------------------
+      - id: "implement-fixes"
+        agent: "foundation:modular-builder"
+        provider_preferences:
+          - provider: anthropic
+            model: claude-opus-4-*
+          - provider: openai
+            model: o3
+        prompt: |
+          You are implementing spec compliance fixes for wave: {{wave_name}}
+
+          SPEC REQUIREMENTS (verbatim from spec):
+          {{spec_requirements}}
+
+          WAVE ITEMS TO FIX:
+          {{wave_items_description}}
+
+          INSTRUCTIONS:
+          1. Read the relevant source files to understand the current
+             implementation. Start with the files mentioned in the spec
+             requirements above.
+          2. For EACH spec gap, implement the minimum change needed to comply
+             with the verbatim spec text. Do not over-engineer.
+          3. Write or update tests to verify each fix. Each spec requirement
+             should have at least one test covering it.
+          4. After implementing, run the mock test suite to verify:
+               uv run python -m pytest tests/ \
+                 --ignore=tests/test_e2e_integration.py \
+                 --ignore=tests/test_live_comprehensive.py -x -q
+          5. Fix any test failures before finishing.
+
+          CONSTRAINTS:
+          - Make targeted, minimal fixes -- do not refactor unrelated code
+          - Keep changes focused on the spec requirements listed above
+          - Preserve existing test coverage (do not delete passing tests)
+          - Follow existing code style and patterns in the codebase
+
+          When finished, provide a summary of:
+          - Each fix made (file path, what changed, which spec requirement)
+          - New or modified tests (file path, what they verify)
+          - Test run results
+        output: "implementation_summary"
+        timeout: 1800
+
+      # -----------------------------------------------------------------------
+      # Step 4: Run mock/unit tests
+      # -----------------------------------------------------------------------
+      - id: "run-mock-tests"
+        type: "bash"
+        command: |
+          uv run python -m pytest tests/ \
+            --ignore=tests/test_e2e_integration.py \
+            --ignore=tests/test_live_comprehensive.py \
+            -x -q 2>&1
+        output: "mock_test_results"
+        timeout: 300
+
+      # -----------------------------------------------------------------------
+      # Step 5: Run live/integration tests (may be slow -- on_error: continue)
+      # -----------------------------------------------------------------------
+      - id: "run-live-tests"
+        type: "bash"
+        command: |
+          uv run python -m pytest \
+            tests/test_e2e_integration.py \
+            tests/test_live_comprehensive.py \
+            -v -x 2>&1
+        output: "live_test_results"
+        timeout: 600
+        on_error: "continue"
+
+      # -----------------------------------------------------------------------
+      # Step 6: Generate diff for review
+      # -----------------------------------------------------------------------
+      - id: "generate-diff"
+        type: "bash"
+        command: |
+          git diff HEAD > /tmp/wave-diff.patch
+          echo "=== Diff Stats ==="
+          git diff --stat HEAD
+          echo ""
+          echo "=== Full Diff ==="
+          git diff HEAD
+        output: "diff_output"
+        timeout: 60
+
+  # ===========================================================================
+  # Stage 2: Review and Converge  (no approval -- automated loop)
+  #
+  # While loop runs max 3 iterations. Each iteration:
+  #   1. Correctness review  (Sonnet 4.5)
+  #   2. Simplification review (o3)
+  #   3. Synthesize into APPROVE / REQUEST_CHANGES verdict
+  #   4. If REQUEST_CHANGES: apply must-fix items
+  #   5. If REQUEST_CHANGES: regenerate diff
+  # Loop exits when synthesis returns converged=true or 3 iterations done.
+  # ===========================================================================
+  - name: "review-and-converge"
+    steps:
+      - id: "review-converge-loop"
+        type: "bash"
+        command: "echo 'Review convergence loop'"
+        while_condition: "{{converged}} != 'true'"
+        max_while_iterations: 3
+        while_steps:
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          # Review A: Correctness against spec  (Sonnet 4.5)
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          - id: "review-correctness"
+            agent: "foundation:zen-architect"
+            mode: "REVIEW"
+            provider_preferences:
+              - provider: anthropic
+                model: claude-sonnet-4-5-*
+              - provider: openai
+                model: o3
+            prompt: |
+              You are reviewing code changes for spec compliance correctness.
+
+              SPEC REQUIREMENTS:
+              {{spec_requirements}}
+
+              WAVE ITEMS:
+              {{wave_items_description}}
+
+              IMPLEMENTATION SUMMARY:
+              {{implementation_summary}}
+
+              CURRENT DIFF:
+              {{diff_output}}
+
+              TEST RESULTS:
+              Mock: {{mock_test_results}}
+              Live: {{live_test_results}}
+
+              For each claimed fix, verify:
+              1. Does the code change actually close the spec gap?
+              2. Is the implementation correct per the spec's exact wording?
+              3. Are there edge cases the spec mentions that aren't handled?
+              4. Are the tests adequate to prove compliance?
+
+              Report:
+              - Per-item verdict: PASS / PARTIAL / FAIL
+              - Must-fix issues (blocking -- things that are wrong or missing)
+              - Should-fix issues (non-blocking suggestions)
+
+              Be strict about spec compliance. Cite spec text when flagging gaps.
+            output: "correctness_review"
+            timeout: 600
+
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          # Review B: Simplification / DRY  (o3)
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          - id: "review-simplification"
+            agent: "foundation:zen-architect"
+            mode: "REVIEW"
+            provider_preferences:
+              - provider: openai
+                model: o3
+              - provider: anthropic
+                model: claude-sonnet-4-5-*
+            prompt: |
+              You are reviewing code changes for unnecessary complexity and
+              DRY violations. Focus ONLY on the diff -- do not review existing
+              code that wasn't changed.
+
+              CURRENT DIFF:
+              {{diff_output}}
+
+              Look for:
+              1. Unnecessary complexity beyond what the spec requires
+              2. Boilerplate that could be reduced
+              3. DRY violations (duplicated logic across the changed files)
+              4. Over-engineering or premature abstraction
+              5. Dead code, unused imports, or leftover debug statements
+
+              Report:
+              - Must-fix items (genuine problems: dead code, DRY violations
+                that will cause maintenance issues)
+              - Nice-to-have suggestions (style preferences, minor cleanups)
+
+              Be pragmatic. Only flag things that genuinely matter.
+              Do NOT flag things that are just style preferences.
+            output: "simplification_review"
+            timeout: 600
+
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          # Synthesize: Merge reviews into single verdict
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          - id: "synthesize-reviews"
+            agent: "foundation:zen-architect"
+            mode: "ANALYZE"
+            prompt: |
+              Merge these two review reports into a single verdict.
+
+              === CORRECTNESS REVIEW ===
+              {{correctness_review}}
+
+              === SIMPLIFICATION REVIEW ===
+              {{simplification_review}}
+
+              Produce a JSON response with this EXACT structure:
+              {
+                "verdict": "APPROVE",
+                "converged": "true",
+                "must_fix": [],
+                "summary": "Brief overall assessment"
+              }
+
+              OR if there are must-fix items:
+              {
+                "verdict": "REQUEST_CHANGES",
+                "converged": "false",
+                "must_fix": [
+                  {
+                    "file": "path/to/file.py",
+                    "issue": "Description of what must change",
+                    "source": "correctness or simplification"
+                  }
+                ],
+                "summary": "Brief overall assessment"
+              }
+
+              RULES:
+              - verdict = APPROVE and converged = "true" when there are
+                ZERO must-fix items
+              - verdict = REQUEST_CHANGES and converged = "false" when
+                there are ANY must-fix items
+              - Only genuinely blocking issues go in must_fix
+              - Nice-to-have suggestions are NOT must-fix items
+              - A PARTIAL verdict from correctness review IS a must-fix
+                (spec compliance is non-negotiable)
+
+              Return ONLY the JSON object. No markdown fences, no prose.
+            output: "review_synthesis"
+            parse_json: true
+            timeout: 300
+
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          # Conditional: Apply must-fix items
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          - id: "apply-review-fixes"
+            condition: "{{review_synthesis.verdict}} == 'REQUEST_CHANGES'"
+            agent: "foundation:modular-builder"
+            prompt: |
+              The review found must-fix items. Apply them now.
+
+              MUST-FIX ITEMS:
+              {{review_synthesis.must_fix}}
+
+              CORRECTNESS REVIEW (full details):
+              {{correctness_review}}
+
+              SIMPLIFICATION REVIEW (full details):
+              {{simplification_review}}
+
+              Instructions:
+              1. Address EACH must-fix item listed above
+              2. Make minimal, targeted changes -- fix only what's flagged
+              3. After making changes, run the test suite:
+                   uv run python -m pytest tests/ \
+                     --ignore=tests/test_e2e_integration.py \
+                     --ignore=tests/test_live_comprehensive.py -x -q
+              4. Fix any test failures caused by your changes
+              5. Do NOT introduce new features or refactor unrelated code
+
+              Report what you changed and the test results.
+            output: "fix_results"
+            timeout: 900
+
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          # Conditional: Regenerate diff after fixes
+          # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+          - id: "re-generate-diff"
+            condition: "{{review_synthesis.verdict}} == 'REQUEST_CHANGES'"
+            type: "bash"
+            command: |
+              git diff HEAD > /tmp/wave-diff.patch
+              echo "=== Diff Stats ==="
+              git diff --stat HEAD
+              echo ""
+              echo "=== Full Diff ==="
+              git diff HEAD
+            output: "diff_output"
+            timeout: 60
+
+        update_context:
+          converged: "{{review_synthesis.converged}}"
+        break_when: "{{converged}} == 'true'"
+
+  # ===========================================================================
+  # Stage 3: Ship
+  # ===========================================================================
+  - name: "ship"
+    steps:
+      # -----------------------------------------------------------------------
+      # Step: Commit all changes and push feature branch
+      # -----------------------------------------------------------------------
+      - id: "commit-and-push"
+        agent: "foundation:git-ops"
+        prompt: |
+          Stage and commit all changes on the current branch feat/{{wave_name}}
+          with a descriptive commit message summarizing the spec compliance
+          fixes for {{wave_name}}.
+
+          Then push the branch to origin.
+
+          Implementation summary for commit message context:
+          {{implementation_summary}}
+
+          Review synthesis:
+          {{review_synthesis}}
+        output: "push_output"
+        timeout: 120
+        retry:
+          max_attempts: 3
+          backoff: "exponential"
+          initial_delay: 5
+
+      # -----------------------------------------------------------------------
+      # Step: Create pull request
+      # -----------------------------------------------------------------------
+      - id: "create-pr"
+        agent: "foundation:git-ops"
+        prompt: |
+          Create a pull request for branch feat/{{wave_name}} targeting
+          {{base_branch}}.
+
+          Title: feat: {{wave_name}}
+          Body should include:
+          - Summary of spec compliance fixes for {{wave_name}}
+          - Implementation summary: {{implementation_summary}}
+          - Review verdict: {{review_synthesis.summary}}
+        output: "pr_output"
+        timeout: 60
+        retry:
+          max_attempts: 3
+          backoff: "exponential"
+          initial_delay: 5
+
+  # ===========================================================================
+  # Stage 4: Merge  (approval gate fires before this stage's steps)
+  # ===========================================================================
+  - name: "merge"
+    approval:
+      required: true
+      prompt: |
+        PR created for {{wave_name}}.
+
+        Push result: {{push_output}}
+        PR result: {{pr_output}}
+
+        Review the PR on GitHub. When satisfied, approve to squash-merge.
+        Deny to leave the PR open for manual handling.
+      timeout: 0
+      default: "deny"
+    steps:
+      # -----------------------------------------------------------------------
+      # Step: Squash-merge PR and return to base branch
+      # -----------------------------------------------------------------------
+      - id: "merge-pr"
+        type: "bash"
+        command: |
+          set -euo pipefail
+          git checkout feat/{{wave_name}}
+          gh pr merge --squash
+          git checkout {{base_branch}}
+          git pull origin {{base_branch}}
+          echo "Merged and returned to {{base_branch}}"
+        env:
+          GIT_EDITOR: "true"
+        output: "merge_output"
+        timeout: 120
+
+# =============================================================================
+# Output Summary:
+#
+# After full execution, you will have:
+#   - validation_output     : Confirmation that spec files exist
+#   - branch_output         : Feature branch creation confirmation
+#   - spec_requirements     : Verbatim spec text for each wave item
+#   - implementation_summary : What was changed and why
+#   - mock_test_results     : Unit/mock test output
+#   - live_test_results     : Integration/live test output
+#   - diff_output           : Final git diff (updated by convergence loop)
+#   - correctness_review    : Last correctness review
+#   - simplification_review : Last simplification review
+#   - review_synthesis      : Final review verdict (JSON)
+#   - push_output           : Git push confirmation
+#   - pr_output             : PR creation URL
+#   - merge_output          : Merge confirmation
+#
+# Artifacts on disk:
+#   - /tmp/wave-diff.patch   : Last generated diff patch file
+#
+# =============================================================================
