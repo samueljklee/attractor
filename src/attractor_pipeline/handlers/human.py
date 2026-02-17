@@ -1,22 +1,49 @@
 """Human-in-the-loop handler for wait.human nodes.
 
-Implements the Interviewer pattern from attractor-spec §6.
+Implements the Interviewer pattern from attractor-spec §6, §11.8.
 The handler delegates to an Interviewer implementation to ask
 the human a question and wait for a response.
 
-Default implementations:
-- AutoApproveInterviewer: always approves (for testing)
+Implementations:
+- AutoApproveInterviewer: always approves (for testing and CI)
 - ConsoleInterviewer: prompts on stdin (for CLI use)
+- CallbackInterviewer: delegates to an async callback (for embedding)
+- QueueInterviewer: reads from a pre-filled answer queue (for testing)
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
 from attractor_agent.abort import AbortSignal
 from attractor_pipeline.engine.runner import HandlerResult, Outcome
 from attractor_pipeline.graph import Graph, Node
+
+# ------------------------------------------------------------------ #
+# Question type enum (Spec §6, §11.8)
+# ------------------------------------------------------------------ #
+
+
+class QuestionType(StrEnum):
+    """Type of question for human-in-the-loop interactions. Spec §6.
+
+    Informational hint for interviewer implementations -- the type
+    is not enforced by the protocol but allows UIs to render
+    appropriate controls (radio buttons, checkboxes, text fields, etc.).
+    """
+
+    SINGLE_SELECT = "single_select"
+    MULTI_SELECT = "multi_select"
+    FREE_TEXT = "free_text"
+    CONFIRM = "confirm"
+
+
+# ------------------------------------------------------------------ #
+# Interviewer protocol
+# ------------------------------------------------------------------ #
 
 
 class Interviewer(Protocol):
@@ -31,6 +58,7 @@ class Interviewer(Protocol):
         question: str,
         options: list[str] | None = None,
         node_id: str = "",
+        question_type: QuestionType | None = None,
     ) -> str:
         """Ask the human a question and return their response.
 
@@ -38,11 +66,19 @@ class Interviewer(Protocol):
             question: The question text to present.
             options: Optional list of valid choices (e.g., ["yes", "no"]).
             node_id: The pipeline node ID (for context).
+            question_type: Optional hint for the type of question.
+                If None, inferred from options: SINGLE_SELECT when
+                options are provided, FREE_TEXT otherwise.
 
         Returns:
             The human's response string.
         """
         ...
+
+
+# ------------------------------------------------------------------ #
+# Built-in interviewer implementations
+# ------------------------------------------------------------------ #
 
 
 class AutoApproveInterviewer:
@@ -53,6 +89,7 @@ class AutoApproveInterviewer:
         question: str,
         options: list[str] | None = None,
         node_id: str = "",
+        question_type: QuestionType | None = None,
     ) -> str:
         if options:
             return options[0]
@@ -67,6 +104,7 @@ class ConsoleInterviewer:
         question: str,
         options: list[str] | None = None,
         node_id: str = "",
+        question_type: QuestionType | None = None,
     ) -> str:
         import asyncio
 
@@ -77,6 +115,58 @@ class ConsoleInterviewer:
 
         # Run input() in a thread to avoid blocking the event loop
         return await asyncio.to_thread(input, prompt)
+
+
+class CallbackInterviewer:
+    """Delegates to a provided async callback function. Spec §6, §11.8.
+
+    Useful for embedding the pipeline in applications that provide
+    their own UI or messaging layer for human interaction.
+    """
+
+    def __init__(
+        self,
+        callback: Callable[
+            [str, list[str] | None, str | None],
+            Awaitable[str],
+        ],
+    ) -> None:
+        self._callback = callback
+
+    async def ask(
+        self,
+        question: str,
+        options: list[str] | None = None,
+        node_id: str = "",
+        question_type: QuestionType | None = None,
+    ) -> str:
+        return await self._callback(question, options, node_id or None)
+
+
+class QueueInterviewer:
+    """Reads from a pre-filled answer queue. Spec §6, §11.8.
+
+    Designed for deterministic testing: supply a list of answers
+    up front and they are returned in order for each ``ask()`` call.
+    Raises ``IndexError`` when the queue is exhausted.
+    """
+
+    def __init__(self, answers: list[str]) -> None:
+        self._answers = list(answers)
+        self._index = 0
+
+    async def ask(
+        self,
+        question: str,
+        options: list[str] | None = None,
+        node_id: str = "",
+        question_type: QuestionType | None = None,
+    ) -> str:
+        if self._index >= len(self._answers):
+            raise IndexError("QueueInterviewer: no more answers in queue")
+        answer = self._answers[self._index]
+        self._index += 1
+        return answer
 
 
 class HumanHandler:
@@ -112,12 +202,32 @@ class HumanHandler:
                 failure_reason="Aborted while waiting for human input",
             )
 
+        # Infer question type from options (Spec §6, §11.8)
+        question_type: QuestionType | None = None
+        if (
+            options
+            and len(options) == 2
+            and {o.lower() for o in options}
+            <= {
+                "yes",
+                "no",
+                "approve",
+                "reject",
+            }
+        ):
+            question_type = QuestionType.CONFIRM
+        elif options:
+            question_type = QuestionType.SINGLE_SELECT
+        else:
+            question_type = QuestionType.FREE_TEXT
+
         # Ask the human
         try:
             response = await self._interviewer.ask(
                 question=question,
                 options=options,
                 node_id=node.id,
+                question_type=question_type,
             )
         except Exception as exc:  # noqa: BLE001
             return HandlerResult(
