@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,6 +120,33 @@ class ExecutionEnvironment(Protocol):
 
 
 # ------------------------------------------------------------------ #
+# SIGTERM → SIGKILL escalation helper (Spec §9.4)
+# ------------------------------------------------------------------ #
+
+
+def _sigterm_sigkill(proc: subprocess.Popen[str]) -> None:
+    """Send SIGTERM to process group, then SIGKILL after 2 s if still running.
+
+    Spec §9.4: timed-out commands receive SIGTERM first for graceful
+    shutdown, escalating to SIGKILL after 2 seconds.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except OSError:
+        return  # Process already gone
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass  # Exited between SIGTERM and SIGKILL
+        proc.wait()
+
+
+# ------------------------------------------------------------------ #
 # LocalEnvironment -- direct host filesystem access
 # ------------------------------------------------------------------ #
 
@@ -160,20 +188,14 @@ class LocalEnvironment:
 
         def _run() -> ShellResult:
             try:
-                result = subprocess.run(  # noqa: S603
+                proc = subprocess.Popen(  # noqa: S603
                     ["bash", "-c", command],  # noqa: S607
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    timeout=timeout,
                     cwd=cwd,
                     env=shell_env,
                     start_new_session=True,
-                )
-            except subprocess.TimeoutExpired:
-                return ShellResult(
-                    stdout="",
-                    stderr=f"Command timed out after {timeout}s",
-                    returncode=-1,
                 )
             except OSError as e:
                 return ShellResult(
@@ -181,10 +203,23 @@ class LocalEnvironment:
                     stderr=f"Error: {e}",
                     returncode=-1,
                 )
+
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # Spec §9.4: SIGTERM → wait 2 s → SIGKILL
+                _sigterm_sigkill(proc)
+                stdout, stderr = proc.communicate()
+                return ShellResult(
+                    stdout=stdout or "",
+                    stderr=f"Command timed out after {timeout}s",
+                    returncode=-1,
+                )
+
             return ShellResult(
-                stdout=result.stdout,
-                stderr=result.stderr,
-                returncode=result.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                returncode=proc.returncode,
             )
 
         return await asyncio.to_thread(_run)
