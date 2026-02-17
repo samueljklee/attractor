@@ -168,7 +168,7 @@ class Client:
         Retry only applies to the initial connection.
         """
         adapter = self._resolve_adapter(request)
-        return await adapter.stream(request)  # type: ignore[return-value]
+        return adapter.stream(request)  # type: ignore[return-value]
 
     async def close(self) -> None:
         """Close all registered adapters and release resources."""
