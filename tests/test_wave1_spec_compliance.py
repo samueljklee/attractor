@@ -495,7 +495,7 @@ class TestValidationConditionSyntax:
     def test_valid_condition_no_diagnostic(self):
         """A valid condition expression should produce no R14 diagnostic."""
         graph = Graph(name="test")
-        graph.nodes["start"] = Node(id="start", shape="ellipse")
+        graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         graph.nodes["a"] = Node(id="a", shape="box", prompt="do stuff")
         graph.nodes["b"] = Node(id="b", shape="box", prompt="other stuff")
         graph.nodes["exit"] = Node(id="exit", shape="Msquare")
@@ -511,7 +511,7 @@ class TestValidationConditionSyntax:
     def test_invalid_condition_produces_error(self):
         """An edge with an unparseable condition produces an ERROR diagnostic."""
         graph = Graph(name="test")
-        graph.nodes["start"] = Node(id="start", shape="ellipse")
+        graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         graph.nodes["a"] = Node(id="a", shape="box", prompt="do stuff")
         graph.nodes["b"] = Node(id="b", shape="box", prompt="other stuff")
         graph.nodes["exit"] = Node(id="exit", shape="Msquare")
@@ -535,7 +535,7 @@ class TestValidationPromptOnLlmNodes:
     def test_box_node_without_prompt_produces_warning(self):
         """An LLM node (box) with no prompt and no label produces a WARNING."""
         graph = Graph(name="test")
-        graph.nodes["start"] = Node(id="start", shape="ellipse")
+        graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         # Box node with no prompt and no label
         graph.nodes["work"] = Node(id="work", shape="box")
         graph.nodes["exit"] = Node(id="exit", shape="Msquare")
@@ -553,7 +553,7 @@ class TestValidationPromptOnLlmNodes:
     def test_box_node_with_prompt_no_warning(self):
         """An LLM node with a prompt should NOT trigger a warning."""
         graph = Graph(name="test")
-        graph.nodes["start"] = Node(id="start", shape="ellipse")
+        graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         graph.nodes["work"] = Node(id="work", shape="box", prompt="Write some code")
         graph.nodes["exit"] = Node(id="exit", shape="Msquare")
         graph.edges.append(Edge(source="start", target="work"))
@@ -567,7 +567,7 @@ class TestValidationPromptOnLlmNodes:
     def test_box_node_with_label_no_warning(self):
         """An LLM node with a label (but no prompt) should NOT trigger a warning."""
         graph = Graph(name="test")
-        graph.nodes["start"] = Node(id="start", shape="ellipse")
+        graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         graph.nodes["work"] = Node(id="work", shape="box", label="Code Review")
         graph.nodes["exit"] = Node(id="exit", shape="Msquare")
         graph.edges.append(Edge(source="start", target="work"))
@@ -581,7 +581,7 @@ class TestValidationPromptOnLlmNodes:
     def test_non_box_node_without_prompt_no_warning(self):
         """Non-box shapes (diamond, etc.) don't require prompts."""
         graph = Graph(name="test")
-        graph.nodes["start"] = Node(id="start", shape="ellipse")
+        graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         graph.nodes["branch"] = Node(id="branch", shape="diamond")
         graph.nodes["exit"] = Node(id="exit", shape="Msquare")
         graph.edges.append(Edge(source="start", target="branch"))

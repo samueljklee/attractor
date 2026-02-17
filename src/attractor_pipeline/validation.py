@@ -78,14 +78,14 @@ def validate_or_raise(graph: Graph) -> None:
 
 
 def _rule_has_start_node(graph: Graph) -> list[Diagnostic]:
-    """R01: Graph must have exactly one start node (shape=ellipse)."""
-    start_nodes = [n for n in graph.nodes.values() if n.shape == "ellipse"]
+    """R01: Graph must have exactly one start node (shape=Mdiamond)."""
+    start_nodes = [n for n in graph.nodes.values() if n.shape == "Mdiamond"]
     if len(start_nodes) == 0:
         return [
             Diagnostic(
                 rule="R01",
                 severity=Severity.ERROR,
-                message="Graph has no start node (shape=ellipse)",
+                message="Graph has no start node (shape=Mdiamond)",
             )
         ]
     if len(start_nodes) > 1:
@@ -115,7 +115,7 @@ def _rule_has_exit_node(graph: Graph) -> list[Diagnostic]:
 
 
 def _rule_start_has_no_incoming(graph: Graph) -> list[Diagnostic]:
-    """R03: Start node should have no incoming edges."""
+    """R03: Start node must have no incoming edges."""
     start = graph.get_start_node()
     if start is None:
         return []
@@ -125,7 +125,7 @@ def _rule_start_has_no_incoming(graph: Graph) -> list[Diagnostic]:
         return [
             Diagnostic(
                 rule="R03",
-                severity=Severity.WARNING,
+                severity=Severity.ERROR,
                 message=f"Start node '{start.id}' has incoming edges from: {sources}",
                 node_id=start.id,
             )
@@ -134,7 +134,7 @@ def _rule_start_has_no_incoming(graph: Graph) -> list[Diagnostic]:
 
 
 def _rule_exit_has_no_outgoing(graph: Graph) -> list[Diagnostic]:
-    """R04: Exit nodes should have no outgoing edges."""
+    """R04: Exit nodes must have no outgoing edges."""
     results: list[Diagnostic] = []
     for node in graph.get_exit_nodes():
         outgoing = graph.outgoing_edges(node.id)
@@ -143,7 +143,7 @@ def _rule_exit_has_no_outgoing(graph: Graph) -> list[Diagnostic]:
             results.append(
                 Diagnostic(
                     rule="R04",
-                    severity=Severity.WARNING,
+                    severity=Severity.ERROR,
                     message=(f"Exit node '{node.id}' has outgoing edges to: {targets}"),
                     node_id=node.id,
                 )

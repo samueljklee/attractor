@@ -36,7 +36,7 @@ class TestExecuteSubgraph:
         """Subgraph runs through linear nodes and stops at fan-in boundary."""
         g = parse_dot("""
         digraph Sub {
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             a [shape=box, prompt="Task A"]
             b [shape=box, prompt="Task B"]
             join [shape=tripleoctagon]
@@ -271,7 +271,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph Parallel {
             graph [goal="Parallel test"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             branch_a [shape=box, prompt="Branch A"]
             branch_b [shape=box, prompt="Branch B"]
@@ -301,7 +301,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph ParaTool {
             graph [goal="Parallel tools"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             cmd_a [shape=parallelogram, prompt="echo branch_a_output"]
             cmd_b [shape=parallelogram, prompt="echo branch_b_output"]
@@ -335,7 +335,7 @@ class TestParallelPipeline:
         """Aborting during parallel execution cancels all branches."""
         g = parse_dot("""
         digraph ParaAbort {
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             a [shape=box, prompt="A"]
             b [shape=box, prompt="B"]
@@ -364,7 +364,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph Single {
             graph [goal="Single branch"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             only [shape=box, prompt="Only branch"]
             join [shape=tripleoctagon]
@@ -387,7 +387,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph NoEdge {
             graph [goal="No edges"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             done [shape=Msquare]
             start -> fork -> done
@@ -407,7 +407,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph NonPara {
             graph [goal="Non-parallel"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             task [shape=box, prompt="Task"]
             join [shape=tripleoctagon]
             done [shape=Msquare]
@@ -427,7 +427,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph CtxIso {
             graph [goal="Context isolation"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             a [shape=parallelogram, prompt="echo alpha"]
             b [shape=parallelogram, prompt="echo beta"]
@@ -458,7 +458,7 @@ class TestParallelPipeline:
         g = parse_dot("""
         digraph ThreeWay {
             graph [goal="Three-way"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             a [shape=box, prompt="A"]
             b [shape=box, prompt="B"]
@@ -501,7 +501,7 @@ class TestParallelEdgeCases:
         g = parse_dot("""
         digraph Mixed {
             graph [goal="Mixed"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             good [shape=box, prompt="Good"]
             bad [shape=box, handler="nonexistent"]
@@ -528,7 +528,7 @@ class TestParallelEdgeCases:
         g = parse_dot("""
         digraph Ckpt {
             graph [goal="Checkpoint"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             fork [shape=component]
             a [shape=box, prompt="A"]
             b [shape=box, prompt="B"]

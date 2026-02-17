@@ -38,9 +38,11 @@ class TruncationLimits:
             "read_file": cls(max_chars=50_000, max_lines=1000),
             "shell": cls(max_chars=30_000, max_lines=256),
             "grep": cls(max_chars=20_000, max_lines=200),
-            "glob": cls(max_chars=10_000, max_lines=500),
-            "write_file": cls(max_chars=5_000, max_lines=50),
-            "edit_file": cls(max_chars=5_000, max_lines=50),
+            "glob": cls(max_chars=20_000, max_lines=500),
+            "write_file": cls(max_chars=1_000, max_lines=50),
+            "edit_file": cls(max_chars=10_000, max_lines=50),
+            "apply_patch": cls(max_chars=10_000, max_lines=200),
+            "spawn_agent": cls(max_chars=20_000, max_lines=500),
         }
         preset = presets.get(tool_name, cls())
 
@@ -90,7 +92,12 @@ def truncate_output(
         head = output[:head_size]
         tail = output[-tail_size:] if tail_size > 0 else ""
         omitted = len(output) - head_size - tail_size
-        output = f"{head}\n\n[... {omitted:,} characters omitted ...]\n\n{tail}"
+        output = (
+            f"{head}\n\n[WARNING: Tool output was truncated. {omitted:,} characters "
+            f"were removed from the middle. The full output is available in the "
+            f"event stream. If you need to see specific parts, re-run the tool "
+            f"with more targeted parameters.]\n\n{tail}"
+        )
         truncated = True
 
     # Pass 2: Line-based truncation
@@ -102,7 +109,10 @@ def truncate_output(
         tail = lines[-tail_lines:] if tail_lines > 0 else []
         omitted_lines = len(lines) - head_lines - tail_lines
         output = (
-            "\n".join(head) + f"\n\n[... {omitted_lines:,} lines omitted ...]\n\n" + "\n".join(tail)
+            "\n".join(head) + f"\n\n[WARNING: Tool output was truncated. {omitted_lines:,} lines "
+            f"were removed from the middle. The full output is available in the "
+            f"event stream. If you need to see specific parts, re-run the tool "
+            f"with more targeted parameters.]\n\n" + "\n".join(tail)
         )
         truncated = True
 

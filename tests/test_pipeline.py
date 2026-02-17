@@ -28,7 +28,7 @@ async def run_tests() -> None:
     g = parse_dot("""
     digraph Simple {
         graph [goal="Test pipeline"]
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         task [shape=box, prompt="Do something"]
         done [shape=Msquare]
         start -> task -> done
@@ -49,7 +49,7 @@ async def run_tests() -> None:
     g2 = parse_dot("""
     digraph Branch {
         graph [goal="Test branching"]
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         check [shape=diamond]
         yes_path [shape=box, prompt="Yes path"]
         no_path [shape=box, prompt="No path"]
@@ -75,7 +75,7 @@ async def run_tests() -> None:
     g3 = parse_dot("""
     digraph GoalGate {
         graph [goal="Pass the gate", max_goal_gate_redirects="2"]
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         code [shape=box, prompt="Write code"]
         done [shape=Msquare, goal_gate="outcome = fail", retry_target="code"]
         start -> code -> done
@@ -96,7 +96,7 @@ async def run_tests() -> None:
 
     g4 = parse_dot("""
     digraph Abort {
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         done [shape=Msquare]
         start -> done
     }
@@ -116,7 +116,7 @@ async def run_tests() -> None:
     g5 = parse_dot("""
     digraph Checkpoint {
         graph [goal="Test checkpoint"]
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         task1 [shape=box, prompt="Task 1"]
         task2 [shape=box, prompt="Task 2"]
         done [shape=Msquare]
@@ -180,7 +180,7 @@ async def run_tests() -> None:
     # === Test 8: Tool handler ===
     g8 = parse_dot("""
     digraph ToolTest {
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         run [shape=parallelogram, prompt="echo hello_from_pipeline"]
         done [shape=Msquare]
         start -> run -> done
@@ -198,7 +198,7 @@ async def run_tests() -> None:
     # === Test 9: Human handler (auto-approve) ===
     g9 = parse_dot("""
     digraph HumanGate {
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         approve [shape=house, prompt="Deploy to production?"]
         deploy [shape=box, prompt="Deploying"]
         done [shape=Msquare]
@@ -220,7 +220,7 @@ async def run_tests() -> None:
     # === Test 10: Missing handler fails gracefully ===
     g10 = parse_dot("""
     digraph Missing {
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         custom [shape=box, handler="nonexistent_handler"]
         done [shape=Msquare]
         start -> custom -> done
@@ -243,7 +243,7 @@ async def run_tests() -> None:
     g11 = parse_dot("""
     digraph Codergen {
         graph [goal="Build feature"]
-        start [shape=ellipse]
+        start [shape=Mdiamond]
         code [shape=box, prompt="Implement $goal"]
         done [shape=Msquare]
         start -> code -> done

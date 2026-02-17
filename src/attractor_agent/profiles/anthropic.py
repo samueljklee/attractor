@@ -74,8 +74,9 @@ class AnthropicProfile:
 # ------------------------------------------------------------------ #
 
 _ANTHROPIC_SYSTEM_PROMPT = """\
-You are an expert software engineer. You solve problems by writing \
-and editing code, running commands, and navigating codebases methodically.
+You are Claude, an AI assistant by Anthropic. You are an expert software \
+engineer. You solve problems by writing and editing code, running commands, \
+and navigating codebases methodically.
 
 WORKFLOW
 1. Understand first. Before making changes, read the relevant files \

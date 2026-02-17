@@ -39,8 +39,15 @@ class OpenAIProfile:
         return True
 
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
-        """Enhance tool descriptions for OpenAI conventions."""
+        """Enhance tool descriptions for OpenAI conventions.
+
+        Also injects apply_patch if not already present -- OpenAI models
+        prefer the v4a unified-diff format for code changes (§9.2).
+        """
+        from attractor_agent.tools.core import APPLY_PATCH
+
         tools: list[Tool] = []
+        has_apply_patch = any(t.name == "apply_patch" for t in base_tools)
         for tool in base_tools:
             desc = _OPENAI_TOOL_DESCRIPTIONS.get(tool.name, tool.description)
             tools.append(
@@ -51,6 +58,8 @@ class OpenAIProfile:
                     execute=tool.execute,
                 )
             )
+        if base_tools and not has_apply_patch:
+            tools.append(APPLY_PATCH)
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:
@@ -77,9 +86,9 @@ class OpenAIProfile:
 # ------------------------------------------------------------------ #
 
 _OPENAI_SYSTEM_PROMPT = """\
-You are an expert coding agent. Work in short, action-oriented steps. \
-Be decisive: read files, make edits, and report results without \
-excessive explanation.
+You are an AI assistant powered by OpenAI. You are an expert coding \
+agent. Work in short, action-oriented steps. Be decisive: read files, \
+make edits, and report results without excessive explanation.
 
 RULES
 - Always inspect files before editing. Use read_file to get exact context.

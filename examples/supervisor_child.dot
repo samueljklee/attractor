@@ -6,7 +6,7 @@
 digraph ChildPipeline {
     graph [goal="$goal"]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     design [
         shape=box,

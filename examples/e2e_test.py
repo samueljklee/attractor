@@ -73,7 +73,7 @@ async def main() -> None:
     digraph FeaturePipeline {
         graph [goal="Write a Python function that calculates fibonacci numbers"]
 
-        start [shape=ellipse, label="Start"]
+        start [shape=Mdiamond, label="Start"]
 
         plan [
             shape=box,

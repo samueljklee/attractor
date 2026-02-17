@@ -108,7 +108,9 @@ class AnthropicAdapter:
             elif request.tool_choice == "required":
                 body["tool_choice"] = {"type": "any"}
             elif request.tool_choice == "none":
-                body["tool_choice"] = {"type": "none"}
+                # Anthropic does not support tool_choice={type: none} when
+                # tools are present.  Omit the tools array instead (§8.7).
+                body.pop("tools", None)
             else:
                 body["tool_choice"] = {"type": "tool", "name": request.tool_choice}
 

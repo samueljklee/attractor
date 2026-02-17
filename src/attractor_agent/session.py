@@ -68,6 +68,9 @@ class SessionConfig:
     reasoning_effort: str | None = None
     provider_options: dict[str, Any] | None = None
 
+    # User-supplied instruction override -- appended LAST (layer 5, §9.8)
+    user_instructions: str = ""
+
     # Working directory for environment context (None = os.getcwd())
     working_dir: str | None = None
 
@@ -534,6 +537,10 @@ class Session:
         )
         if project_docs:
             parts.append(project_docs)
+
+        # 4. User instruction overrides -- appended LAST (layer 5, §9.8)
+        if self._config.user_instructions:
+            parts.append(self._config.user_instructions)
 
         return "\n\n".join(parts)
 

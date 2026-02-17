@@ -21,7 +21,7 @@ from attractor_pipeline.graph import Graph, Node
 
 
 class StartHandler:
-    """Handler for start nodes (shape=ellipse). Spec §4.3.
+    """Handler for start nodes (shape=Mdiamond). Spec §4.3.
 
     The start handler is a no-op -- it simply passes through
     with SUCCESS status. Its purpose is to mark the entry point.

@@ -90,7 +90,7 @@ class TestValidationR03:
         g = parse_dot("""
         digraph R03 {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             task [shape=box]
             done [shape=Msquare]
             start -> task -> done
@@ -100,13 +100,13 @@ class TestValidationR03:
         diags = validate(g)
         r03 = [d for d in diags if d.rule == "R03"]
         assert len(r03) == 1
-        assert r03[0].severity == Severity.WARNING
+        assert r03[0].severity == Severity.ERROR
 
     def test_clean_start_no_warning(self):
         g = parse_dot("""
         digraph Clean {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare]
             start -> done
         }
@@ -123,7 +123,7 @@ class TestValidationR04:
         g = parse_dot("""
         digraph R04 {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare]
             task [shape=box]
             start -> done
@@ -133,7 +133,7 @@ class TestValidationR04:
         diags = validate(g)
         r04 = [d for d in diags if d.rule == "R04"]
         assert len(r04) == 1
-        assert r04[0].severity == Severity.WARNING
+        assert r04[0].severity == Severity.ERROR
 
 
 class TestValidationR05:
@@ -143,7 +143,7 @@ class TestValidationR05:
         g = parse_dot("""
         digraph R05 {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             orphan [shape=box]
             done [shape=Msquare]
             start -> done
@@ -165,7 +165,7 @@ class TestValidationR06:
 
         g = Graph(
             name="R06",
-            nodes={"start": Node(id="start", shape="ellipse")},
+            nodes={"start": Node(id="start", shape="Mdiamond")},
             edges=[Edge(source="start", target="ghost")],
         )
         diags = validate(g)
@@ -181,7 +181,7 @@ class TestValidationR08:
         g = parse_dot("""
         digraph R08 {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             branch [shape=diamond]
             done [shape=Msquare]
             start -> branch -> done
@@ -196,7 +196,7 @@ class TestValidationR08:
         g = parse_dot("""
         digraph R08ok {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             branch [shape=diamond]
             a [shape=box]
             b [shape=box]
@@ -220,7 +220,7 @@ class TestValidationR09:
         g = parse_dot("""
         digraph R09 {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             done [shape=Msquare, goal_gate="outcome = success"]
             start -> done
         }
@@ -234,7 +234,7 @@ class TestValidationR09:
         g = parse_dot("""
         digraph R09ok {
             graph [goal="X"]
-            start [shape=ellipse]
+            start [shape=Mdiamond]
             task [shape=box]
             done [shape=Msquare, goal_gate="outcome = success", retry_target="task"]
             start -> task -> done

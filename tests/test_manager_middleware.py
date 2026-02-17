@@ -51,7 +51,7 @@ class TestManagerHandler:
         child_file = tmp_path / "child.dot"
         child_file.write_text(
             "digraph Child {\n"
-            "  start [shape=ellipse]\n"
+            "  start [shape=Mdiamond]\n"
             "  task [shape=box]\n"
             "  done [shape=Msquare]\n"
             "  start -> task -> done\n"
@@ -62,7 +62,7 @@ class TestManagerHandler:
             name="Supervised",
             goal="File test",
             nodes={
-                "start": Node(id="start", shape="ellipse"),
+                "start": Node(id="start", shape="Mdiamond"),
                 "mgr": Node(
                     id="mgr",
                     shape="hexagon",
@@ -103,13 +103,13 @@ class TestManagerHandler:
         """Abort signal stops the manager loop."""
         child_file = tmp_path / "child.dot"
         child_file.write_text(
-            "digraph C { start [shape=ellipse]; done [shape=Msquare]; start -> done }\n"
+            "digraph C { start [shape=Mdiamond]; done [shape=Msquare]; start -> done }\n"
         )
 
         g = Graph(
             name="Abort",
             nodes={
-                "start": Node(id="start", shape="ellipse"),
+                "start": Node(id="start", shape="Mdiamond"),
                 "mgr": Node(
                     id="mgr",
                     shape="hexagon",
@@ -137,14 +137,14 @@ class TestManagerHandler:
         """Manager stores iteration metadata in context."""
         child_file = tmp_path / "child.dot"
         child_file.write_text(
-            "digraph C { start [shape=ellipse]; done [shape=Msquare]; start -> done }\n"
+            "digraph C { start [shape=Mdiamond]; done [shape=Msquare]; start -> done }\n"
         )
 
         g = Graph(
             name="Meta",
             goal="Metadata test",
             nodes={
-                "start": Node(id="start", shape="ellipse"),
+                "start": Node(id="start", shape="Mdiamond"),
                 "mgr": Node(
                     id="mgr",
                     shape="hexagon",
@@ -181,7 +181,7 @@ class TestManagerHandler:
             name="MaxIter",
             goal="Max iterations",
             nodes={
-                "start": Node(id="start", shape="ellipse"),
+                "start": Node(id="start", shape="Mdiamond"),
                 "mgr": Node(
                     id="mgr",
                     shape="hexagon",

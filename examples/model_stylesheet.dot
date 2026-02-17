@@ -17,7 +17,7 @@ digraph ModelStylesheet {
         "
     ]
 
-    start [shape=ellipse]
+    start [shape=Mdiamond]
 
     // Gets * defaults: claude-sonnet-4-5
     plan [shape=box, prompt="Create an architecture plan for: $goal"]

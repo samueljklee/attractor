@@ -131,11 +131,13 @@ class TestSystemPromptContent:
 
 
 class TestToolCustomization:
-    def test_all_profiles_return_6_tools(self):
-        for provider in ["anthropic", "openai", "gemini"]:
+    def test_all_profiles_return_expected_tools(self):
+        for provider, expected_count in [("anthropic", 6), ("openai", 7), ("gemini", 6)]:
             p = get_profile(provider)
             tools = p.get_tools(list(ALL_CORE_TOOLS))
-            assert len(tools) == 6, f"{provider} returned {len(tools)} tools"
+            assert len(tools) == expected_count, (
+                f"{provider} returned {len(tools)} tools, expected {expected_count}"
+            )
 
     def test_base_profile_returns_tools_unmodified(self):
         p = BaseProfile()
@@ -158,7 +160,10 @@ class TestToolCustomization:
         """Profile tool customization must NOT change execute handlers."""
         p = get_profile(provider)
         tools = p.get_tools(list(ALL_CORE_TOOLS))
-        for orig, custom in zip(ALL_CORE_TOOLS, tools, strict=True):
+        # Match by name -- profiles may inject extra tools (e.g. apply_patch)
+        custom_by_name = {t.name: t for t in tools}
+        for orig in ALL_CORE_TOOLS:
+            custom = custom_by_name[orig.name]
             assert custom.execute is orig.execute, (
                 f"{provider}: {custom.name} execute handler changed"
             )
@@ -168,7 +173,9 @@ class TestToolCustomization:
         """Profile must NOT change tool parameter schemas."""
         p = get_profile(provider)
         tools = p.get_tools(list(ALL_CORE_TOOLS))
-        for orig, custom in zip(ALL_CORE_TOOLS, tools, strict=True):
+        custom_by_name = {t.name: t for t in tools}
+        for orig in ALL_CORE_TOOLS:
+            custom = custom_by_name[orig.name]
             assert custom.parameters == orig.parameters, (
                 f"{provider}: {custom.name} parameters changed"
             )

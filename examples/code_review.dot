@@ -8,7 +8,7 @@ digraph CodeReview {
         max_goal_gate_redirects="3"
     ]
 
-    start [shape=ellipse, label="Start"]
+    start [shape=Mdiamond, label="Start"]
 
     implement [
         shape=box,

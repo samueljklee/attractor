@@ -146,7 +146,7 @@ class TestVariableExpansionNoMutation:
 
         graph = Graph(name="test")
         graph.nodes["start"] = Node(
-            id="start", shape="ellipse", label="Start", prompt="Goal is $goal"
+            id="start", shape="Mdiamond", label="Start", prompt="Goal is $goal"
         )
         graph.nodes["end"] = Node(id="end", shape="Msquare", label="End")
         graph.edges.append(Edge(source="start", target="end"))
@@ -169,7 +169,7 @@ class TestVariableExpansionNoMutation:
         from attractor_pipeline.transforms import VariableExpansionTransform
 
         graph = Graph(name="test")
-        graph.nodes["a"] = Node(id="a", shape="ellipse", prompt="$x")
+        graph.nodes["a"] = Node(id="a", shape="Mdiamond", prompt="$x")
         graph.edges.append(Edge(source="a", target="a"))
 
         transform = VariableExpansionTransform({"x": "val"})
