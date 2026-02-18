@@ -217,23 +217,29 @@ class TestClient:
         assert resp.text == "from-catalog"
 
     @pytest.mark.asyncio
-    async def test_route_by_prefix_heuristic(self):
-        """claude-* prefix -> anthropic, gpt-* -> openai, gemini-* -> gemini."""
+    async def test_no_heuristic_uses_default_provider(self):
+        """Unknown models (not in catalog) always route to default_provider.
+
+        The prefix-guessing heuristic was deleted in wave-11 (Spec §2.2:
+        'The Client never guesses').  All three unknown model strings below
+        should fall through to the default provider (the first registered).
+        """
         client = Client()
         client.register_adapter("anthropic", _MockAdapter("anthropic"))
         client.register_adapter("openai", _MockAdapter("openai"))
         client.register_adapter("gemini", _MockAdapter("gemini"))
 
+        # First registered is "anthropic", so it is the default
         r1 = await client.complete(
             Request(model="claude-unknown-model", messages=[Message.user("x")])
         )
-        assert r1.provider == "anthropic"
+        assert r1.provider == "anthropic"  # via default, not heuristic
 
         r2 = await client.complete(Request(model="gpt-future", messages=[Message.user("x")]))
-        assert r2.provider == "openai"
+        assert r2.provider == "anthropic"  # via default (no guessing)
 
         r3 = await client.complete(Request(model="gemini-future", messages=[Message.user("x")]))
-        assert r3.provider == "gemini"
+        assert r3.provider == "anthropic"  # via default (no guessing)
 
     @pytest.mark.asyncio
     async def test_unknown_provider_raises(self):

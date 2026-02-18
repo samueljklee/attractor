@@ -29,6 +29,12 @@ class Client:
 
     Usage::
 
+        client = Client(
+            providers={"openai": adapter},
+            default_provider="openai",
+        )
+
+        # Or register adapters individually:
         client = Client()
         client.register_adapter("anthropic", AnthropicAdapter(config))
         client.register_adapter("openai", OpenAIAdapter(config))
@@ -42,21 +48,37 @@ class Client:
     def __init__(
         self,
         *,
+        providers: dict[str, Any] | None = None,
+        default_provider: str | None = None,
         retry_policy: RetryPolicy | None = None,
         middleware: list[Middleware] | None = None,
     ) -> None:
         self._adapters: dict[str, ProviderAdapter] = {}
+        self._default_provider: str | None = default_provider
         self._retry_policy = retry_policy or RetryPolicy()
         self._middleware = middleware or []
+        if providers:
+            for provider_name, adapter in providers.items():
+                self.register_adapter(provider_name, adapter)
+
+    @property
+    def default_provider(self) -> str | None:
+        """The name of the default provider, or None if not set."""
+        return self._default_provider
 
     def register_adapter(self, provider: str, adapter: ProviderAdapter) -> None:
         """Register a provider adapter.
+
+        The first adapter registered becomes the default provider if no
+        default has been set yet (Spec §2.2: "first registered wins").
 
         Args:
             provider: Provider name (e.g., "anthropic", "openai", "gemini").
             adapter: The adapter instance implementing ProviderAdapter.
         """
         self._adapters[provider] = adapter
+        if self._default_provider is None:
+            self._default_provider = provider
 
     @classmethod
     def from_env(cls, **kwargs: Any) -> Client:
@@ -103,10 +125,11 @@ class Client:
     def _resolve_adapter(self, request: Request) -> ProviderAdapter:
         """Resolve which adapter to use for a request.
 
-        Resolution order:
+        Resolution order (Spec §2.2 — the Client never guesses):
         1. Explicit ``request.provider`` field
         2. Model catalog lookup (model ID -> provider)
-        3. Fail with ConfigurationError
+        3. ``self._default_provider``
+        4. Fail with ConfigurationError
 
         Raises:
             ConfigurationError: If no adapter can be resolved.
@@ -128,19 +151,11 @@ class Client:
             if adapter:
                 return adapter
 
-        # 3. Try to infer from model string prefix heuristics
-        model_lower = request.model.lower()
-        for provider_name, adapter in self._adapters.items():
-            if provider_name in model_lower or model_lower.startswith(
-                ("claude", "gpt", "gemini", "o1", "o3", "o4")
-            ):
-                # More specific matching
-                if model_lower.startswith("claude") and provider_name == "anthropic":
-                    return adapter
-                if model_lower.startswith(("gpt", "o1", "o3", "o4")) and provider_name == "openai":
-                    return adapter
-                if model_lower.startswith("gemini") and provider_name == "gemini":
-                    return adapter
+        # 3. Default provider
+        if self._default_provider is not None:
+            adapter = self._adapters.get(self._default_provider)
+            if adapter:
+                return adapter
 
         raise ConfigurationError(
             f"Cannot resolve provider for model {request.model!r}. "
