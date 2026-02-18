@@ -206,6 +206,17 @@ class OpenAICompatAdapter:
         for msg in request.messages:
             match msg.role:
                 case Role.USER:
+                    for part in msg.content:
+                        if part.kind == ContentPartKind.AUDIO:
+                            raise InvalidRequestError(
+                                "OpenAI-compat does not support audio content input",
+                                provider="openai-compat",
+                            )
+                        if part.kind == ContentPartKind.DOCUMENT:
+                            raise InvalidRequestError(
+                                "OpenAI-compat does not support document content input",
+                                provider="openai-compat",
+                            )
                     messages.append(
                         {
                             "role": "user",
