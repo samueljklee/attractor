@@ -58,6 +58,7 @@ async def generate(
     system: str | None = None,
     messages: list[Message] | None = None,
     tools: list[Tool] | None = None,
+    tool_choice: str | None = None,
     max_rounds: int = 10,
     temperature: float | None = None,
     reasoning_effort: str | None = None,
@@ -112,6 +113,7 @@ async def generate(
             messages=history,
             system=system,
             tools=tools,
+            tool_choice=tool_choice,
             temperature=temperature,
             reasoning_effort=reasoning_effort,
         )
