@@ -12,12 +12,13 @@ Covers:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 
 from attractor_llm.client import Client
 from attractor_llm.errors import ConfigurationError
-from attractor_llm.types import FinishReason, Message, Request, Response, Usage
-
+from attractor_llm.types import FinishReason, Message, Request, Response, StreamEvent, Usage
 
 # ------------------------------------------------------------------ #
 # Minimal mock adapter
@@ -44,6 +45,11 @@ class _MockAdapter:
             finish_reason=FinishReason.STOP,
             usage=Usage(input_tokens=1, output_tokens=1),
         )
+
+    async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
+        """Stub: immediately-exhausted async generator for smoke tests."""
+        return
+        yield  # type: ignore[misc]  # unreachable – makes this an async generator
 
     async def close(self) -> None:
         pass
@@ -87,17 +93,34 @@ class TestDefaultProviderRouting:
         assert resp.text == "from-alpha"
 
     @pytest.mark.asyncio
-    async def test_no_default_no_provider_raises_config_error(self):
-        """Client with adapters but no default + unknown model -> ConfigurationError."""
+    async def test_no_adapters_raises_config_error(self):
+        """Client with no adapters at all raises ConfigurationError."""
         client = Client()
-        client.register_adapter("alpha", _MockAdapter("alpha"))
-        # Manually clear default so first-registered auto-set is overridden
-        client._default_provider = None
-
         with pytest.raises(ConfigurationError):
-            await client.complete(
-                Request(model="totally-unknown-model-xyz", messages=[Message.user("hi")])
-            )
+            await client.complete(Request(model="unknown", messages=[Message.user("hi")]))
+
+    @pytest.mark.asyncio
+    async def test_dangling_default_provider_raises_config_error(self):
+        """default_provider set to unregistered name raises clearly."""
+        client = Client(default_provider="ghost")
+        client.register_adapter("openai", _MockAdapter("openai"))
+        with pytest.raises(ConfigurationError, match="ghost"):
+            await client.complete(Request(model="unknown", messages=[Message.user("hi")]))
+
+    @pytest.mark.asyncio
+    async def test_stream_uses_default_provider_routing(self):
+        """stream() also resolves adapter via _resolve_adapter / default_provider."""
+        adapter_a = _MockAdapter("alpha")
+        adapter_b = _MockAdapter("beta")
+        client = Client(default_provider="beta")
+        client.register_adapter("alpha", adapter_a)
+        client.register_adapter("beta", adapter_b)
+
+        # Should not raise; default_provider routes to "beta"
+        stream = await client.stream(
+            Request(model="unknown-model-xyz", messages=[Message.user("hi")])
+        )
+        assert stream is not None
 
     def test_from_env_sets_first_registered_as_default(self, monkeypatch):
         """from_env() first-found env key becomes default_provider."""

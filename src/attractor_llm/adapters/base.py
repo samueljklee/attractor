@@ -50,10 +50,10 @@ class ProviderAdapter(Protocol):
         """
         ...
 
-    async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
+    def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
         """Send a request and return a streaming event iterator. Spec §4.2.
 
-        Yields StreamEvent objects as the model generates.
+        Calling this returns an async iterator directly (async generator pattern).
         The first event should be START with model/provider metadata.
         The last event should be FINISH with the finish reason.
         """

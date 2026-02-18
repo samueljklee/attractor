@@ -7,7 +7,7 @@ explicit provider field, and applies middleware (logging, caching, etc.).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 from attractor_llm.adapters.base import ProviderAdapter
@@ -48,7 +48,7 @@ class Client:
     def __init__(
         self,
         *,
-        providers: dict[str, Any] | None = None,
+        providers: Mapping[str, ProviderAdapter] | None = None,
         default_provider: str | None = None,
         retry_policy: RetryPolicy | None = None,
         middleware: list[Middleware] | None = None,
@@ -156,6 +156,10 @@ class Client:
             adapter = self._adapters.get(self._default_provider)
             if adapter:
                 return adapter
+            raise ConfigurationError(
+                f"default_provider={self._default_provider!r} is not registered. "
+                f"Registered providers: {list(self._adapters)}"
+            )
 
         raise ConfigurationError(
             f"Cannot resolve provider for model {request.model!r}. "
