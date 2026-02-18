@@ -6,7 +6,13 @@ Provides a single interface across OpenAI, Anthropic, and Google Gemini.
 from __future__ import annotations
 
 from attractor_llm.adapters.base import ProviderAdapter, ProviderConfig
-from attractor_llm.catalog import ModelInfo, get_default_model, get_model_info, list_models
+from attractor_llm.catalog import (
+    ModelInfo,
+    get_default_model,
+    get_latest_model,
+    get_model_info,
+    list_models,
+)
 from attractor_llm.client import Client, get_default_client, set_default_client
 from attractor_llm.errors import (
     AbortError,
@@ -107,6 +113,7 @@ __all__ = [
     # Catalog
     "ModelInfo",
     "get_model_info",
+    "get_latest_model",
     "list_models",
     "get_default_model",
     # Streaming
