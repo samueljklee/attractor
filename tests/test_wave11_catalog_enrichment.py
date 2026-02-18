@@ -46,8 +46,8 @@ def test_model_info_has_aliases_field() -> None:
         context_window=8_000,
     )
     assert hasattr(m, "aliases")
-    assert isinstance(m.aliases, list)
-    assert m.aliases == []
+    assert isinstance(m.aliases, tuple)
+    assert m.aliases == ()
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ def test_get_latest_model_unsatisfiable_capability_returns_none(
             supports_tools=True,
             supports_vision=True,
             supports_reasoning=False,  # <-- no reasoning
-            aliases=["limited"],
+            aliases=("limited",),
         )
     ]
     monkeypatch.setattr("attractor_llm.catalog.MODEL_CATALOG", fake_catalog)
@@ -213,6 +213,31 @@ def test_get_latest_model_unknown_capability_returns_none() -> None:
     """An unknown capability string always returns None (no field to filter on)."""
     assert get_latest_model("anthropic", "telekinesis") is None
     assert get_latest_model("openai", "audio") is None
+
+
+# ---------------------------------------------------------------------------
+# Export surface
+# ---------------------------------------------------------------------------
+
+
+def test_model_info_instances_are_hashable() -> None:
+    """All catalog entries must be hashable (frozen=True + tuple aliases)."""
+    for entry in MODEL_CATALOG:
+        h = hash(entry)
+        assert isinstance(h, int)
+    model_set = set(MODEL_CATALOG)
+    assert len(model_set) == len(MODEL_CATALOG)
+
+
+def test_no_duplicate_aliases_across_catalog() -> None:
+    """Each alias string must belong to exactly one catalog entry."""
+    seen: dict[str, str] = {}
+    for entry in MODEL_CATALOG:
+        for alias in entry.aliases:
+            assert alias not in seen, (
+                f"Alias {alias!r} claimed by both {seen[alias]!r} and {entry.id!r}"
+            )
+            seen[alias] = entry.id
 
 
 # ---------------------------------------------------------------------------
