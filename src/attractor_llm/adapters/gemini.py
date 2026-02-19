@@ -527,6 +527,10 @@ class GeminiAdapter:
 
                     elif "functionCall" in part:
                         has_seen_tool_call = True
+                        # §3.14: close any open text block before TOOL_CALL_START
+                        if _in_text_block:
+                            yield StreamEvent(kind=StreamEventKind.TEXT_END)
+                            _in_text_block = False
                         fc = part["functionCall"]
                         tc_id = f"gemini_{uuid.uuid4().hex[:12]}"
                         yield StreamEvent(

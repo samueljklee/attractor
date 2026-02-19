@@ -893,3 +893,313 @@ class TestStreamWithTools:
 
         chunks = await _collect(result.text_stream)
         assert "hi back" in "".join(chunks)
+
+    # ------------------------------------------------------------------ #
+    # Swarm-review additions
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_stream_with_tools_passive_tool_returns_early(self):
+        """A tool with execute=None (passive) causes loop to stop after first round.
+
+        §5.5: passive tools return control to the caller; stream_with_tools must
+        not attempt execution and must not raise.
+        """
+        from attractor_llm.generate import stream_with_tools
+
+        passive_tool = Tool(
+            name="passive_tool",
+            description="A tool with no execute handler",
+            parameters={"type": "object", "properties": {}},
+            execute=None,  # passive
+        )
+
+        # Round 1 returns a tool call for the passive tool; no round 2 should happen
+        round1 = _tool_call_stream("call_p1", "passive_tool", "{}")
+
+        mock_client = _MockClient([round1])  # type: ignore[arg-type]
+
+        result = await stream_with_tools(
+            mock_client,  # type: ignore[arg-type]
+            model="test-model",
+            prompt="use passive tool",
+            tools=[passive_tool],
+        )
+
+        # Consuming the stream must not raise
+        await result.response()
+
+        # Only 1 LLM call -- loop exited early on passive tool
+        assert len(mock_client.stream_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_with_tools_parallel_execution(self):
+        """Two tool calls in one round are executed in parallel via asyncio.gather.
+
+        Both tools must run; call-order tracking confirms both were invoked.
+        """
+        import asyncio
+
+        from attractor_llm.generate import stream_with_tools
+
+        call_log: list[str] = []
+
+        async def tool_a() -> str:
+            call_log.append("a_start")
+            await asyncio.sleep(0)  # yield to event loop
+            call_log.append("a_end")
+            return "result_a"
+
+        async def tool_b() -> str:
+            call_log.append("b_start")
+            await asyncio.sleep(0)
+            call_log.append("b_end")
+            return "result_b"
+
+        empty_params: dict[str, Any] = {"type": "object", "properties": {}}
+        tools = [
+            Tool(name="tool_a", description="tool A", parameters=empty_params, execute=tool_a),
+            Tool(name="tool_b", description="tool B", parameters=empty_params, execute=tool_b),
+        ]
+
+        # Build a stream that returns two tool calls in a single round
+        two_tool_round: list[StreamEvent] = [
+            StreamEvent(kind=StreamEventKind.START, model="test", provider="test"),
+            StreamEvent(
+                kind=StreamEventKind.TOOL_CALL_START, tool_call_id="c1", tool_name="tool_a"
+            ),
+            StreamEvent(
+                kind=StreamEventKind.TOOL_CALL_DELTA, tool_call_id="c1", arguments_delta="{}"
+            ),
+            StreamEvent(kind=StreamEventKind.TOOL_CALL_END, tool_call_id="c1"),
+            StreamEvent(
+                kind=StreamEventKind.TOOL_CALL_START, tool_call_id="c2", tool_name="tool_b"
+            ),
+            StreamEvent(
+                kind=StreamEventKind.TOOL_CALL_DELTA, tool_call_id="c2", arguments_delta="{}"
+            ),
+            StreamEvent(kind=StreamEventKind.TOOL_CALL_END, tool_call_id="c2"),
+            StreamEvent(kind=StreamEventKind.FINISH, finish_reason=FinishReason.TOOL_CALLS),
+        ]
+        round2 = _text_stream("both done")
+
+        mock_client = _MockClient([two_tool_round, round2])  # type: ignore[arg-type]
+
+        result = await stream_with_tools(
+            mock_client,  # type: ignore[arg-type]
+            model="test-model",
+            prompt="run both tools",
+            tools=tools,
+        )
+
+        await result.response()
+
+        # Both tools were called
+        assert "a_start" in call_log
+        assert "b_start" in call_log
+        assert "a_end" in call_log
+        assert "b_end" in call_log
+
+        # Two LLM calls: tool round + final text round
+        assert len(mock_client.stream_calls) == 2
+
+        # Both tool results appear in the second request's history
+        second_messages = mock_client.stream_calls[1].messages
+        tool_result_parts = [
+            p for m in second_messages for p in m.content if p.kind == ContentPartKind.TOOL_RESULT
+        ]
+        result_outputs = {p.output for p in tool_result_parts}
+        assert "result_a" in result_outputs
+        assert "result_b" in result_outputs
+
+    @pytest.mark.asyncio
+    async def test_stream_with_tools_abort_signal(self):
+        """A pre-set abort signal causes AbortError to be raised while consuming stream."""
+        from attractor_llm.errors import AbortError
+        from attractor_llm.generate import stream_with_tools
+
+        abort = MagicMock()
+        abort.is_set = True  # pre-set before the call
+
+        mock_client = _MockClient([_text_stream("hi")])  # type: ignore[arg-type]
+
+        result = await stream_with_tools(
+            mock_client,  # type: ignore[arg-type]
+            model="test-model",
+            prompt="hi",
+            abort_signal=abort,
+        )
+
+        with pytest.raises(AbortError, match="aborted"):
+            await result.response()
+
+
+# ================================================================== #
+# Swarm-review Fix 1 – TEXT_END ordering in OpenAI + Gemini adapters
+# ================================================================== #
+
+
+class TestOpenAITextEndBeforeToolCallStart:
+    """TEXT_END must be emitted before TOOL_CALL_START when text precedes a tool call."""
+
+    def _make_adapter(self):
+        from attractor_llm.adapters.base import ProviderConfig
+        from attractor_llm.adapters.openai import OpenAIAdapter
+
+        config = ProviderConfig(api_key="test-key", timeout=30.0)
+        return OpenAIAdapter(config)
+
+    @pytest.mark.asyncio
+    async def test_openai_text_end_before_tool_call_start(self):
+        """Interleaved text + tool call: TEXT_END must immediately precede TOOL_CALL_START."""
+        adapter = self._make_adapter()
+        request = Request(model="gpt-4o", messages=[Message.user("hi")])
+
+        def _d(obj: dict) -> str:
+            return "data: " + json.dumps(obj)
+
+        fc_item = {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "my_tool",
+            "arguments": "",
+        }
+        fc_done_item = {**fc_item, "arguments": "{}"}
+
+        sse_lines = [
+            # Model starts with text
+            "event: response.created",
+            _d({"type": "response.created", "response": {"id": "r1", "model": "gpt-4o"}}),
+            "",
+            "event: response.output_text.delta",
+            _d(
+                {
+                    "type": "response.output_text.delta",
+                    "delta": "Let me check",
+                    "output_index": 0,
+                    "content_part_index": 0,
+                }
+            ),
+            "",
+            # Then switches to a tool call
+            "event: response.output_item.added",
+            _d({"type": "response.output_item.added", "item": fc_item}),
+            "",
+            "event: response.function_call_arguments.delta",
+            _d({"type": "response.function_call_arguments.delta", "delta": "{}"}),
+            "",
+            "event: response.output_item.done",
+            _d({"type": "response.output_item.done", "item": fc_done_item}),
+            "",
+            "event: response.completed",
+            _d(
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "r1",
+                        "model": "gpt-4o",
+                        "status": "completed",
+                        "usage": {"input_tokens": 5, "output_tokens": 5},
+                    },
+                }
+            ),
+            "",
+        ]
+
+        async def _mock_aiter_lines():
+            for line in sse_lines:
+                yield line
+
+        mock_http = MagicMock()
+        mock_http.aiter_lines = _mock_aiter_lines
+
+        collected: list[StreamEvent] = []
+        async for ev in adapter._parse_sse(mock_http, request):
+            collected.append(ev)
+
+        kinds = _kinds(collected)
+
+        # TEXT_END must be present
+        assert StreamEventKind.TEXT_END in kinds, "TEXT_END missing from interleaved stream"
+        # TOOL_CALL_START must be present
+        assert StreamEventKind.TOOL_CALL_START in kinds
+
+        text_end_idx = kinds.index(StreamEventKind.TEXT_END)
+        tool_call_start_idx = kinds.index(StreamEventKind.TOOL_CALL_START)
+
+        assert text_end_idx < tool_call_start_idx, (
+            f"TEXT_END (pos {text_end_idx}) must come before "
+            f"TOOL_CALL_START (pos {tool_call_start_idx})"
+        )
+
+
+class TestGeminiTextEndBeforeToolCallStart:
+    """TEXT_END must be emitted before TOOL_CALL_START when text precedes a function call."""
+
+    def _make_adapter(self):
+        from attractor_llm.adapters.base import ProviderConfig
+        from attractor_llm.adapters.gemini import GeminiAdapter
+
+        config = ProviderConfig(api_key="test-key", timeout=30.0)
+        return GeminiAdapter(config)
+
+    @pytest.mark.asyncio
+    async def test_gemini_text_end_before_tool_call_start(self):
+        """Interleaved text + functionCall: TEXT_END must precede TOOL_CALL_START."""
+        adapter = self._make_adapter()
+        request = Request(model="gemini-2.0-flash", messages=[Message.user("hi")])
+
+        # Single chunk that has both a text part AND a functionCall part
+        chunk = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "I'll help you with that."},
+                            {
+                                "functionCall": {
+                                    "name": "my_tool",
+                                    "args": {"x": 1},
+                                }
+                            },
+                        ],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "modelVersion": "gemini-2.0-flash",
+            "responseId": "r1",
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10},
+        }
+
+        sse_lines = [
+            "data: " + json.dumps(chunk),
+            "",
+        ]
+
+        async def _mock_aiter_lines():
+            for line in sse_lines:
+                yield line
+
+        mock_http = MagicMock()
+        mock_http.aiter_lines = _mock_aiter_lines
+
+        collected: list[StreamEvent] = []
+        async for ev in adapter._parse_stream(mock_http, request, first_chunk=True):
+            collected.append(ev)
+
+        kinds = _kinds(collected)
+
+        # Both TEXT_END and TOOL_CALL_START must be present
+        assert StreamEventKind.TEXT_END in kinds, "TEXT_END missing from interleaved stream"
+        assert StreamEventKind.TOOL_CALL_START in kinds
+
+        text_end_idx = kinds.index(StreamEventKind.TEXT_END)
+        tool_call_start_idx = kinds.index(StreamEventKind.TOOL_CALL_START)
+
+        assert text_end_idx < tool_call_start_idx, (
+            f"TEXT_END (pos {text_end_idx}) must come before "
+            f"TOOL_CALL_START (pos {tool_call_start_idx})"
+        )

@@ -36,7 +36,7 @@ from attractor_llm.errors import (
     StreamError,
     ToolError,
 )
-from attractor_llm.generate import generate, generate_object, stream
+from attractor_llm.generate import generate, generate_object, stream, stream_with_tools
 from attractor_llm.retry import RetryPolicy, retry_with_policy
 from attractor_llm.streaming import StreamAccumulator, StreamResult
 from attractor_llm.types import (
@@ -122,5 +122,6 @@ __all__ = [
     # High-level API
     "generate",
     "stream",
+    "stream_with_tools",
     "generate_object",
 ]

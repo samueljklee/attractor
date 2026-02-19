@@ -393,9 +393,17 @@ async def stream_with_tools(
             if max_rounds == 0:
                 return
 
-            # Execute tool calls (sequential -- simpler than parallel for streaming)
-            exec_results: list[tuple[ContentPart, str, bool]] = []
-            for tc in response.tool_calls:
+            # §5.5: passive tools (no execute handler) — return control to caller
+            has_passive = any(
+                (t := _find_tool(tools, tc.name or "")) is not None and not t.execute
+                for tc in response.tool_calls
+            )
+            if has_passive:
+                return  # caller handles tool calls
+
+            # Execute tool calls in parallel (§5.7) -- mirrors generate()
+            async def _exec_one(tc: ContentPart) -> tuple[ContentPart, str, bool]:
+                """Execute a single tool call, return (tool_call, output, is_error)."""
                 tool_obj = _find_tool(tools, tc.name or "")
                 if tool_obj and tool_obj.execute:
                     try:
@@ -404,31 +412,45 @@ async def stream_with_tools(
                             try:
                                 args = json.loads(args)
                             except json.JSONDecodeError as exc:
-                                exec_results.append(
-                                    (tc, f"ToolArgError: failed to parse JSON: {exc}", True)
-                                )
-                                continue
+                                return tc, f"ToolArgError: failed to parse JSON: {exc}", True
                         if not isinstance(args, dict):
                             kind = type(args).__name__
-                            exec_results.append(
-                                (
-                                    tc,
-                                    f"ToolArgError: arguments must be a JSON object, got {kind}",
-                                    True,
-                                )
+                            return (
+                                tc,
+                                f"ToolArgError: arguments must be a JSON object, got {kind}",
+                                True,
                             )
-                            continue
                         validation_error = _validate_tool_args(tool_obj, args)
                         if validation_error:
-                            exec_results.append((tc, validation_error, True))
-                            continue
+                            return tc, validation_error, True
                         raw = await tool_obj.execute(**args)
                         output = str(raw) if not isinstance(raw, str) else raw
-                        exec_results.append((tc, output, False))
+                        return tc, output, False
                     except Exception as exc:  # noqa: BLE001
-                        exec_results.append((tc, f"{type(exc).__name__}: {exc}", True))
+                        return tc, f"{type(exc).__name__}: {exc}", True
                 else:
-                    exec_results.append((tc, f"Unknown tool: {tc.name}", True))
+                    return tc, f"Unknown tool: {tc.name}", True
+
+            if len(response.tool_calls) == 1:
+                exec_results: list[tuple[ContentPart, str, bool]] = [
+                    await _exec_one(response.tool_calls[0])
+                ]
+            else:
+                gathered = await asyncio.gather(
+                    *(_exec_one(tc) for tc in response.tool_calls),
+                    return_exceptions=True,
+                )
+                exec_results = []
+                for i, r in enumerate(gathered):
+                    if isinstance(r, (KeyboardInterrupt, SystemExit)):
+                        raise r
+                    if isinstance(r, asyncio.CancelledError):
+                        raise r
+                    if isinstance(r, BaseException):
+                        tc = response.tool_calls[i]
+                        exec_results.append((tc, f"{type(r).__name__}: {r}", True))
+                    else:
+                        exec_results.append(r)
 
             # Append tool results to history for next round
             for tc, output, is_error in exec_results:

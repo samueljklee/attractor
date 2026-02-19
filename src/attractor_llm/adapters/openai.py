@@ -502,8 +502,17 @@ class OpenAIAdapter:
                     if ev.kind == StreamEventKind.TEXT_DELTA and not _in_text_block:
                         yield StreamEvent(kind=StreamEventKind.TEXT_START)
                         _in_text_block = True
-                    # §3.14: emit TEXT_END before FINISH if we are in a text block
-                    if ev.kind == StreamEventKind.FINISH and _in_text_block:
+                    # §3.14: emit TEXT_END before FINISH, ERROR, or TOOL_CALL_START
+                    # if we are still inside an open text block
+                    if (
+                        ev.kind
+                        in (
+                            StreamEventKind.FINISH,
+                            StreamEventKind.ERROR,
+                            StreamEventKind.TOOL_CALL_START,
+                        )
+                        and _in_text_block
+                    ):
                         yield StreamEvent(kind=StreamEventKind.TEXT_END)
                         _in_text_block = False
                     yield ev
