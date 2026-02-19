@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from attractor_llm.errors import (
+    InvalidRequestError,
     classify_http_error,
 )
 from attractor_llm.types import (
@@ -251,8 +252,39 @@ class AnthropicAdapter:
                     "data": part.redacted_data or "",
                 }
 
+            case ContentPartKind.DOCUMENT:
+                if not part.document:
+                    raise InvalidRequestError(
+                        "DOCUMENT content part has no document payload", provider="anthropic"
+                    )
+                if part.document.data:
+                    import base64
+
+                    return {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": part.document.media_type or "application/pdf",
+                            "data": base64.b64encode(part.document.data).decode(),
+                        },
+                    }
+                raise InvalidRequestError(
+                    "Anthropic requires document data as base64;"
+                    " URL-only documents are not supported",
+                    provider="anthropic",
+                )
+
+            case ContentPartKind.AUDIO:
+                raise InvalidRequestError(
+                    "Anthropic does not support audio content input",
+                    provider="anthropic",
+                )
+
             case _:
-                return {"type": "text", "text": f"[unsupported: {part.kind}]"}
+                raise InvalidRequestError(
+                    f"Unsupported content part kind for Anthropic: {part.kind}",
+                    provider="anthropic",
+                )
 
     def _enforce_alternation(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Merge consecutive same-role messages for strict alternation.

@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from attractor_llm.errors import classify_http_error
+from attractor_llm.errors import InvalidRequestError, classify_http_error
 from attractor_llm.types import (
     ContentPart,
     ContentPartKind,
@@ -273,8 +273,21 @@ class OpenAIAdapter:
                                 "image_url": data_uri,
                             }
                         )
+                case ContentPartKind.AUDIO:
+                    raise InvalidRequestError(
+                        "OpenAI does not support audio content input via this adapter",
+                        provider="openai",
+                    )
+                case ContentPartKind.DOCUMENT:
+                    raise InvalidRequestError(
+                        "OpenAI does not support document content input via this adapter",
+                        provider="openai",
+                    )
                 case _:
-                    parts.append({"type": "input_text", "text": f"[unsupported: {part.kind}]"})
+                    raise InvalidRequestError(
+                        f"Unsupported content part kind for OpenAI: {part.kind}",
+                        provider="openai",
+                    )
 
         return parts
 
