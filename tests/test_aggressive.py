@@ -232,8 +232,14 @@ class TestSessionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_loop_detection_fires(self):
-        """Repeated identical tool calls trigger loop detection."""
-        # LLM keeps calling the same tool with same args
+        """Repeated identical tool calls trigger loop detection.
+
+        Spec §2.10: when a loop is detected, a SteeringTurn warning is injected
+        and the loop CONTINUES (does not exit early).  The session should return
+        the final text response produced after the warning, not an exit string.
+        """
+        # LLM calls the same tool 3 times (threshold=3) then produces text.
+        # The 4th LLM call happens after loop detection fires and continues.
         adapter = MockAdapter(
             responses=[
                 make_tool_call_response(
@@ -245,9 +251,8 @@ class TestSessionEdgeCases:
                 make_tool_call_response(
                     "shell", {"command": "echo x", "working_dir": str(self.sandbox)}, "tc-3"
                 ),
-                make_tool_call_response(
-                    "shell", {"command": "echo x", "working_dir": str(self.sandbox)}, "tc-4"
-                ),
+                # After loop detected+reset the model produces a text response.
+                make_text_response("I will try a different approach."),
             ]
         )
 
@@ -265,11 +270,28 @@ class TestSessionEdgeCases:
         session.events.on(lambda e: events.append(e.kind))
 
         loop_output = await session.submit("Do something")
-        assert "Loop detected" in loop_output
+
+        # Spec §2.10: session continues and returns final text (not an exit string).
+        assert loop_output == "I will try a different approach."
+        assert "Loop detected" not in loop_output
+
+        # LOOP_DETECTED event must still be fired.
         assert EventKind.LOOP_DETECTED in events
-        # Loop fires after 3 identical signatures -- so 3 LLM calls, but the
-        # 3rd call's tool calls are NOT executed (detection before execution)
-        assert adapter.call_count == 3
+
+        # A SteeringTurn with a loop warning must appear in history.
+        from attractor_agent.session import SteeringTurn
+
+        steering: list[SteeringTurn] = []
+        for _entry in session.history:
+            if isinstance(_entry, SteeringTurn):
+                steering.append(_entry)
+        assert steering, "Expected a SteeringTurn loop warning in history"
+        assert any(
+            "loop" in st.content.lower() or "repeating" in st.content.lower() for st in steering
+        )
+
+        # 4 LLM calls: 3 tool rounds + 1 final text response.
+        assert adapter.call_count == 4
 
     @pytest.mark.asyncio
     async def test_tool_round_limit(self):

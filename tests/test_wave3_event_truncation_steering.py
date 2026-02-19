@@ -152,21 +152,38 @@ class TestSteeringTurn:
 
     @pytest.mark.asyncio
     async def test_loop_detection_creates_steering_turn(self):
-        """Loop detection warning should create a SteeringTurn entry."""
-        # All responses are the same tool call -> triggers loop detection
+        """Loop detection warning should create a SteeringTurn entry.
+
+        Spec §2.10: loop detection injects a SteeringTurn and CONTINUES
+        (does not exit).  The session eventually hits the tool-round limit
+        since the FakeClient always returns a tool call.
+        """
+        # All responses are the same tool call -> triggers loop detection.
+        # Cap tool rounds so the test terminates quickly.
         client = FakeClient([_tool_call_response("echo")] * 10)
         config = SessionConfig(
             loop_detection_window=4,
             loop_detection_threshold=3,
+            max_tool_rounds_per_turn=5,
         )
         session = Session(client=client, config=config, tools=_make_echo_tool())
         result = await session.submit("go")
 
-        assert "Loop detected" in result
+        # Session must NOT exit with the old "[Loop detected: ...]" string.
+        # It continues until a limit is reached.
+        assert "Loop detected" not in result
 
-        steering_entries = [e for e in session.history if isinstance(e, SteeringTurn)]
+        # A SteeringTurn with the loop warning must have been injected.
+        steering_entries: list[SteeringTurn] = []
+        for entry in session.history:
+            if isinstance(entry, SteeringTurn):
+                steering_entries.append(entry)
         assert len(steering_entries) >= 1
-        assert "Loop detected" in steering_entries[0].content
+        # The injected content must mention "loop" or "repeating".
+        assert any(
+            "loop" in st.content.lower() or "repeating" in st.content.lower()
+            for st in steering_entries
+        )
 
 
 # ================================================================== #

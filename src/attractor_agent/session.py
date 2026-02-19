@@ -14,11 +14,19 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from attractor_agent.abort import AbortSignal
+from attractor_agent.environment import ExecutionEnvironment
 from attractor_agent.events import EventEmitter, EventKind, SessionEvent
-from attractor_agent.tools.core import set_max_command_timeout
+from attractor_agent.tools.core import set_environment, set_max_command_timeout
+
+# ProviderProfile lives in profiles.base which imports SessionConfig from this
+# module -- guard with TYPE_CHECKING to break the circular import.
+# `from __future__ import annotations` ensures the annotation in __init__ is
+# never evaluated at runtime, so this is fully safe.
+if TYPE_CHECKING:
+    from attractor_agent.profiles.base import ProviderProfile
 from attractor_agent.tools.registry import ToolRegistry
 from attractor_llm.catalog import get_model_info
 from attractor_llm.client import Client
@@ -142,6 +150,8 @@ class Session:
         config: SessionConfig | None = None,
         tools: Sequence[Tool] | None = None,
         abort_signal: AbortSignal | None = None,
+        profile: ProviderProfile | None = None,
+        environment: ExecutionEnvironment | None = None,
     ) -> None:
         self._client = client
         self._config = config or SessionConfig()
@@ -150,6 +160,20 @@ class Session:
         self._history: list[Message | SteeringTurn] = []
         self._total_usage = Usage()
         self._turn_count = 0
+
+        # P11: If a ProviderProfile is supplied, extract system prompt and tools.
+        # profile.apply_to_config() fills missing config fields (system_prompt, model…)
+        # then profile.get_tools() filters/augments the base tool list. Spec §9.1.
+        if profile is not None:
+            self._config = profile.apply_to_config(self._config)
+            # Merge profile-provided tools with any explicitly passed tools list.
+            base_tools: list[Tool] = list(tools) if tools else []
+            tools = profile.get_tools(base_tools)
+
+        # P11: If an ExecutionEnvironment is supplied, install it as the
+        # module-level environment used by all tool implementations. Spec §9.1.
+        if environment is not None:
+            set_environment(environment)
 
         # Events
         self._emitter = EventEmitter()
@@ -210,6 +234,19 @@ class Session:
     def tool_registry(self) -> ToolRegistry:
         """Access the tool registry to add/remove tools."""
         return self._tool_registry
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        """Current reasoning_effort setting. Spec §2.7."""
+        return self._config.reasoning_effort
+
+    def set_reasoning_effort(self, effort: str | None) -> None:
+        """Change reasoning_effort for subsequent LLM calls. Spec §2.7.
+
+        The change takes effect on the next LLM call; in-flight requests are
+        not affected.
+        """
+        self._config.reasoning_effort = effort
 
     def steer(self, message: str) -> None:
         """Inject a steering message into the next tool round. Spec §2.6.
@@ -379,10 +416,15 @@ class Session:
             if tool_calls:
                 tool_round += 1
 
-                # Loop detection BEFORE execution (avoid wasted work)
+                # Loop detection BEFORE execution (avoid wasted work).
+                # Spec §2.10: inject a SteeringTurn warning and CONTINUE the
+                # loop -- do not exit -- so the model can self-correct.
                 for tc in tool_calls:
                     if self._loop_detector.record(tc.name or "", tc.arguments):
-                        warning = f"Loop detected: {tc.name} called repeatedly"
+                        warning = (
+                            "[LOOP DETECTED] The conversation appears to be "
+                            "repeating. Please try a different approach."
+                        )
                         self._history.append(SteeringTurn(content=warning))
                         await self._emitter.emit(
                             SessionEvent(
@@ -390,7 +432,10 @@ class Session:
                                 data={"tool": tc.name},
                             )
                         )
-                        return "[Loop detected: repeated tool calls]"
+                        # Reset so we don't fire again immediately, then
+                        # let the model see the steering message.
+                        self._loop_detector.reset()
+                        break
 
                 # Execute all tool calls
                 results = await self._tool_registry.execute_tool_calls(tool_calls)
@@ -444,8 +489,13 @@ class Session:
     def _estimate_history_tokens(self) -> int:
         """Rough token count estimate (~4 chars per token). Spec §9.11."""
         total_chars = len(self._config.system_prompt) if self._config.system_prompt else 0
-        for msg in self._history:
-            for part in msg.content:
+        for entry in self._history:
+            # SteeringTurn.content is a plain str -- count it directly.
+            if isinstance(entry, SteeringTurn):
+                total_chars += len(entry.content)
+                continue
+            # Message.content is list[ContentPart].
+            for part in entry.content:
                 if part.text:
                     total_chars += len(part.text)
                 if part.output:
