@@ -46,9 +46,9 @@ ANTHROPIC_MODEL = "claude-sonnet-4-5"
 GEMINI_MODEL = "gemini-2.0-flash"
 
 # ------------------------------------------------------------------ #
-# Minimal valid PDF bytes (used for document adapter tests)
-# The structure is a well-formed 1-page PDF with no content -- small
-# enough to be accepted by provider APIs without burning tokens.
+# Structurally plausible PDF bytes (header + objects + xref skeleton).
+# The xref offsets are approximate -- this is NOT a spec-compliant PDF,
+# but providers accept it without error, which is all we need here.
 # ------------------------------------------------------------------ #
 
 _MINIMAL_PDF_BYTES = (
@@ -192,6 +192,9 @@ class TestAuthErrorSessionLifecycleLive:
         so that the provider returns 401. No retries are configured so the
         auth error surfaces immediately.
         """
+        # @skip_no_anthropic checks that the Anthropic endpoint is reachable (real key in env).
+        # The test uses a deliberately invalid key to trigger the 401 auth error path.
+        #
         # Build a client with a clearly invalid Anthropic key.
         # RetryPolicy(max_retries=0) prevents any retry attempt; even
         # without it, AuthenticationError.retryable == False so the retry
@@ -200,7 +203,10 @@ class TestAuthErrorSessionLifecycleLive:
         bad_client.register_adapter(
             "anthropic",
             AnthropicAdapter(
-                ProviderConfig(api_key="sk-ant-invalid-key-for-testing-xxx", timeout=15.0)
+                ProviderConfig(
+                    api_key="sk-ant-api03-INVALIDKEYFORTESTING000000000000000000000000000000000000AA",
+                    timeout=15.0,
+                )
             ),
         )
 
