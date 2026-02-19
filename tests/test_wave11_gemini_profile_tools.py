@@ -46,7 +46,7 @@ def _make_dummy_tool(name: str = "shell") -> Tool:
         name=name,
         description=f"Dummy {name} tool.",
         parameters={"type": "object", "properties": {}},
-        handler=None,  # type: ignore[arg-type]
+        execute=None,
     )
 
 

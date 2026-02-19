@@ -59,9 +59,23 @@ class GeminiProfile:
             )
         if base_tools:
             if not any(t.name == "list_dir" for t in tools):
-                tools.append(LIST_DIR)
+                tools.append(
+                    Tool(
+                        name=LIST_DIR.name,
+                        description=_GEMINI_TOOL_DESCRIPTIONS["list_dir"],
+                        parameters=LIST_DIR.parameters,
+                        execute=LIST_DIR.execute,
+                    )
+                )
             if not any(t.name == "read_many_files" for t in tools):
-                tools.append(READ_MANY_FILES)
+                tools.append(
+                    Tool(
+                        name=READ_MANY_FILES.name,
+                        description=_GEMINI_TOOL_DESCRIPTIONS["read_many_files"],
+                        parameters=READ_MANY_FILES.parameters,
+                        execute=READ_MANY_FILES.execute,
+                    )
+                )
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:
@@ -184,5 +198,18 @@ _GEMINI_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Common patterns: '**/*.py' (all Python files), "
         "'src/**/*.ts' (TypeScript in src). "
         "Use to understand project structure before diving in."
+    ),
+    "list_dir": (
+        "List the contents of a directory. Returns files and subdirectories "
+        "with optional depth control. Use depth=0 for immediate children only, "
+        "depth=1 (default) for one level of subdirectories. Directories are "
+        "marked with trailing /. Use this to understand project structure "
+        "before reading specific files."
+    ),
+    "read_many_files": (
+        "Read multiple files in a single call. More efficient than multiple "
+        "read_file calls when you need to examine several files at once. "
+        "Returns concatenated content with file headers and line numbers. "
+        "Missing files are reported per-file without aborting the batch."
     ),
 }
