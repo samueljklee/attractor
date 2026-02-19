@@ -177,11 +177,18 @@ async def generate(
                 try:
                     args = tc.arguments
                     if isinstance(args, str):
-                        args = json.loads(args)
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError as exc:
+                            return tc, f"ToolArgError: failed to parse JSON arguments: {exc}", True
                     # P9: Validate required fields against tool parameter schema (§8.7)
                     if not isinstance(args, dict):
                         kind = type(args).__name__
-                        return tc, f"ToolArgError: arguments must be a JSON object, got {kind}", True
+                        return (
+                            tc,
+                            f"ToolArgError: arguments must be a JSON object, got {kind}",
+                            True,
+                        )
                     validation_error = _validate_tool_args(tool, args)
                     if validation_error:
                         return tc, validation_error, True
@@ -390,6 +397,8 @@ def _validate_tool_args(tool: Tool, args: dict[str, Any]) -> str | None:
         return None  # no schema, nothing to validate
 
     required: list[str] = schema.get("required", [])
+    if not isinstance(required, list):
+        return None  # malformed schema, skip validation
     if not required:
         return None  # no required fields declared
 

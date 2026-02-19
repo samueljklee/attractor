@@ -28,7 +28,12 @@ from attractor_llm.types import (
     Tool,
     Usage,
 )
-from tests.helpers import MockAdapter, make_text_response, make_tool_call_response
+from tests.helpers import (
+    MockAdapter,
+    make_multi_tool_response,
+    make_text_response,
+    make_tool_call_response,
+)
 
 # ================================================================== #
 # Helpers
@@ -282,6 +287,97 @@ class TestP9ToolArgValidationInGenerate:
         tr = result.steps[0].tool_results[0]
         assert tr.is_error is True
         assert "path" in (tr.output or "")
+
+    @pytest.mark.asyncio
+    async def test_generate_malformed_json_string_args_returns_error(self):
+        """Model sends malformed JSON string as arguments -> error tool result, no crash."""
+        tool_call_resp = Response(
+            id="r1",
+            model="mock-model",
+            provider="mock",
+            message=Message(
+                role=Role.ASSISTANT,
+                content=[
+                    ContentPart.tool_call_part("tc-1", "read_file", "{invalid json"),
+                ],
+            ),
+            finish_reason=FinishReason.TOOL_CALLS,
+            usage=Usage(input_tokens=10, output_tokens=15),
+        )
+        final_text_resp = make_text_response("Got an error.")
+        client, _ = _make_client([tool_call_resp, final_text_resp])
+
+        tool = _tool_with_schema("read_file", required=["path"])
+        result = await generate(client, "mock-model", "Read something", tools=[tool])
+
+        # generate() must not raise; the bad JSON becomes an error tool result
+        tr = result.steps[0].tool_results[0]
+        assert tr.is_error is True
+        assert "ToolArgError" in (tr.output or "")
+
+    @pytest.mark.asyncio
+    async def test_generate_non_dict_json_args_returns_error(self):
+        """Model sends a JSON array instead of object -> error tool result with 'got list'."""
+        tool_call_resp = Response(
+            id="r1",
+            model="mock-model",
+            provider="mock",
+            message=Message(
+                role=Role.ASSISTANT,
+                content=[
+                    ContentPart.tool_call_part("tc-1", "read_file", "[1,2,3]"),
+                ],
+            ),
+            finish_reason=FinishReason.TOOL_CALLS,
+            usage=Usage(input_tokens=10, output_tokens=15),
+        )
+        final_text_resp = make_text_response("Got an error.")
+        client, _ = _make_client([tool_call_resp, final_text_resp])
+
+        tool = _tool_with_schema("read_file", required=["path"])
+        result = await generate(client, "mock-model", "Read something", tools=[tool])
+
+        tr = result.steps[0].tool_results[0]
+        assert tr.is_error is True
+        assert "got list" in (tr.output or "")
+
+    @pytest.mark.asyncio
+    async def test_generate_parallel_tools_mixed_validation(self):
+        """Two tool calls: A has valid args (executes), B missing required (error)."""
+        multi_tool_resp = make_multi_tool_response(
+            [
+                ("tc-a", "tool_a", {"x": "value"}),  # valid: 'x' present
+                ("tc-b", "tool_b", {}),  # invalid: 'y' required but absent
+            ]
+        )
+        final_text_resp = make_text_response("Mixed results.")
+        client, _ = _make_client([multi_tool_resp, final_text_resp])
+
+        executed: list[str] = []
+
+        async def _execute_a(**kwargs):
+            executed.append("a")
+            return "a-ok"
+
+        tool_a = _tool_with_schema("tool_a", required=["x"], execute=_execute_a)
+        tool_b = _tool_with_schema("tool_b", required=["y"])
+
+        result = await generate(client, "mock-model", "Run both tools", tools=[tool_a, tool_b])
+
+        tool_step = result.steps[0]
+        assert len(tool_step.tool_results) == 2
+
+        # Results preserve the order of the tool calls in the response
+        result_a = tool_step.tool_results[0]
+        result_b = tool_step.tool_results[1]
+
+        # Tool A executed successfully
+        assert result_a.is_error is False
+        assert executed == ["a"]
+
+        # Tool B got a validation error for missing 'y'
+        assert result_b.is_error is True
+        assert "y" in (result_b.output or "")
 
 
 # ================================================================== #
