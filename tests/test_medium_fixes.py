@@ -175,7 +175,7 @@ class TestFollowUpEventsAndSteering:
 
         # The steering message should have been drained (either during
         # initial loop or follow-up processing)
-        steer_events = [e for e in events if e.kind == EventKind.STEER_INJECTED]
+        steer_events = [e for e in events if e.kind == EventKind.STEERING_INJECTED]
         assert len(steer_events) >= 1
         assert steer_events[0].data["message"] == "mid-turn guidance"
 

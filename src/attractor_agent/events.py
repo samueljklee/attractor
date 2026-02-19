@@ -15,7 +15,7 @@ from typing import Any
 
 
 class EventKind(StrEnum):
-    """Session event types. Spec §2.9."""
+    """Session event types. Spec §2.9, §9.10."""
 
     # Session lifecycle
     SESSION_START = "session.start"
@@ -29,19 +29,21 @@ class EventKind(StrEnum):
     USER_INPUT = "user.input"
 
     # Assistant output
-    ASSISTANT_TEXT = "assistant.text"
-    ASSISTANT_TEXT_DELTA = "assistant.text_delta"
+    ASSISTANT_TEXT_START = "assistant.text_start"  # stream opening
+    ASSISTANT_TEXT_END = "assistant.text_end"  # final assembled text (was ASSISTANT_TEXT)
+    ASSISTANT_TEXT_DELTA = "assistant.text_delta"  # incremental chunk
 
     # Tool execution
     TOOL_CALL_START = "tool.call_start"
     TOOL_CALL_END = "tool.call_end"
+    TOOL_CALL_OUTPUT_DELTA = "tool.call_output_delta"  # incremental tool output chunk
 
     # Steering
-    STEER_INJECTED = "steer.injected"
+    STEERING_INJECTED = "steering.injected"  # was STEER_INJECTED
 
     # Limits and errors
-    LIMIT_REACHED = "limit.reached"
-    LOOP_DETECTED = "loop.detected"
+    TURN_LIMIT = "turn.limit"  # was LIMIT_REACHED
+    LOOP_DETECTION = "loop.detection"  # was LOOP_DETECTED
     CONTEXT_WINDOW_WARNING = "context_window.warning"
     ERROR = "error"
 

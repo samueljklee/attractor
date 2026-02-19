@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 from attractor_agent.tools.registry import ToolRegistry
 from attractor_llm.catalog import get_model_info
 from attractor_llm.client import Client
+from attractor_llm.errors import AccessDeniedError, AuthenticationError
 from attractor_llm.types import (
     Message,
     Request,
@@ -205,6 +206,11 @@ class Session:
         # Tracked subagent tasks for safe cleanup (Spec Appendix B)
         self._subagent_tasks: set[asyncio.Task[object]] = set()
 
+        # TODO: Populated when streaming LLM tasks are created (§9.11 Step 1).
+        # Currently scaffolding -- no production code populates this set yet.
+        # The cleanup mechanism works but is inert until client.stream() is wired.
+        self._active_tasks: set[asyncio.Task[object]] = set()
+
         # Loop detection
         self._loop_detector = _LoopDetector(
             window=self._config.loop_detection_window or 4,
@@ -309,6 +315,7 @@ class Session:
         # Add user message to history
         self._history.append(Message.user(prompt))
 
+        _auth_error = False
         try:
             result = await self._run_loop()
 
@@ -327,6 +334,19 @@ class Session:
                 self._history.append(Message.user(msg))
                 await self._drain_steering()
                 result = await self._run_loop()
+        except (AuthenticationError, AccessDeniedError) as exc:
+            # Spec §9.11: auth errors (401/403) surface immediately → CLOSED.
+            # The session must not accept new inputs after an auth failure.
+            # Flag must be set BEFORE emit so the finally block sees it even
+            # if emit() itself raises.
+            _auth_error = True
+            await self._emitter.emit(
+                SessionEvent(
+                    kind=EventKind.ERROR,
+                    data={"error": str(exc), "turn": self._turn_count, "auth_error": True},
+                )
+            )
+            result = f"[Authentication Error: {exc}]"
         except Exception as exc:
             await self._emitter.emit(
                 SessionEvent(
@@ -336,8 +356,12 @@ class Session:
             )
             result = f"[Error: {exc}]"
         finally:
-            # Spec §9.1: abort transitions to CLOSED (not IDLE)
+            # Spec §9.1: abort transitions to CLOSED (not IDLE).
+            # Spec §9.11: auth errors also transition to CLOSED.
             if self._abort.is_set:
+                await self._cleanup_on_abort()
+                self._state = SessionState.CLOSED
+            elif _auth_error:
                 await self._cleanup_on_abort()
                 self._state = SessionState.CLOSED
             else:
@@ -389,7 +413,7 @@ class Session:
             if self._turn_count > self._config.max_turns:
                 await self._emitter.emit(
                     SessionEvent(
-                        kind=EventKind.LIMIT_REACHED,
+                        kind=EventKind.TURN_LIMIT,
                         data={"limit": "max_turns", "value": self._config.max_turns},
                     )
                 )
@@ -399,7 +423,7 @@ class Session:
             if tool_round >= self._config.max_tool_rounds_per_turn:
                 await self._emitter.emit(
                     SessionEvent(
-                        kind=EventKind.LIMIT_REACHED,
+                        kind=EventKind.TURN_LIMIT,
                         data={
                             "limit": "max_tool_rounds",
                             "value": self._config.max_tool_rounds_per_turn,
@@ -449,7 +473,7 @@ class Session:
                         self._history.append(SteeringTurn(content=warning))
                         await self._emitter.emit(
                             SessionEvent(
-                                kind=EventKind.LOOP_DETECTED,
+                                kind=EventKind.LOOP_DETECTION,
                                 data={"tool": tc.name},
                             )
                         )
@@ -467,7 +491,7 @@ class Session:
             if text:
                 await self._emitter.emit(
                     SessionEvent(
-                        kind=EventKind.ASSISTANT_TEXT,
+                        kind=EventKind.ASSISTANT_TEXT_END,
                         data={"text": text[:500]},
                     )
                 )
@@ -607,7 +631,7 @@ class Session:
             self._history.append(SteeringTurn(content=msg))
             await self._emitter.emit(
                 SessionEvent(
-                    kind=EventKind.STEER_INJECTED,
+                    kind=EventKind.STEERING_INJECTED,
                     data={"message": msg[:200]},
                 )
             )
@@ -615,28 +639,57 @@ class Session:
     async def _cleanup_on_abort(self) -> None:
         """Best-effort resource cleanup on abort. Spec Appendix B.
 
-        Implements feasible steps of the 8-step shutdown sequence:
-        1. Cancel any tracked asyncio tasks (LLM calls in progress)
-        2. Signal running shell processes via abort propagation
-        3. Flush events (handled by caller emitting TURN_END / SESSION_END)
-        4. Cleanup subagents via self._subagent_tasks
+        Implements the 8-step shutdown sequence:
+          Step 1 (scaffolding): Cancel tracked asyncio tasks (LLM stream / active tasks).
+          Step 2 (TODO): Send SIGTERM to running shell processes.
+          Step 3 (TODO): Wait up to 2 seconds for processes to exit.
+          Step 4 (TODO): Send SIGKILL to remaining processes.
+          Step 5 (done): Flush pending work queues.
+          Step 6 (done): Cancel and clear subagent tasks.
+          Step 7 (done): Flush events -- caller emits TURN_END / SESSION_END.
+          Step 8 (done): Transition to CLOSED -- handled by submit() finally block.
 
-        Steps requiring deeper infrastructure (explicit process tracking,
-        SIGTERM/SIGKILL escalation for individual tool processes) are handled
-        by the ExecutionEnvironment layer and AbortSignal callbacks.
+        Steps 2-4 (process SIGTERM/SIGKILL) require the ExecutionEnvironment to
+        expose a process registry.  The LocalEnvironment runs each shell command
+        in its own subprocess via asyncio.to_thread; individual PIDs are not
+        accessible through the ExecutionEnvironment protocol.  Those steps are
+        documented as TODOs pending an env.kill_all_processes() method.
         """
-        # Cancel any asyncio tasks that are tracked (future: LLM stream tasks)
-        # Currently, abort is checked cooperatively at loop-iteration boundaries.
-        # The AbortSignal's on_abort callbacks handle propagation to lower layers.
+        # --- Step 1: Cancel tracked active tasks (e.g. LLM stream coroutines). ---
+        # Tasks are added to _active_tasks when created via asyncio.create_task().
+        for task in self._active_tasks:
+            if not task.done():
+                task.cancel()
+        if self._active_tasks:
+            # Await cancellations so they complete before we continue.
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+        self._active_tasks.clear()
 
-        # Drain and discard pending queues to prevent further work
+        # --- Step 2: SIGTERM running shell processes. ---
+        # TODO: Implement once ExecutionEnvironment exposes kill_all_processes().
+        # Proposed interface:
+        #   if hasattr(self._environment, "kill_all_processes"):
+        #       await self._environment.kill_all_processes(signal=signal.SIGTERM)
+
+        # --- Step 3: Wait up to 2 seconds for processes to exit. ---
+        # TODO: Implement alongside step 2.
+        #   await asyncio.sleep(2)
+
+        # --- Step 4: SIGKILL remaining processes. ---
+        # TODO: Implement once ExecutionEnvironment exposes kill_all_processes().
+        #   if hasattr(self._environment, "kill_all_processes"):
+        #       await self._environment.kill_all_processes(signal=signal.SIGKILL)
+
+        # --- Step 5: Drain and discard pending work queues. ---
         self._steer_queue.clear()
         self._followup_queue.clear()
 
-        # Cancel only explicitly tracked subagent tasks (safe in multi-session processes)
+        # --- Step 6: Cancel subagent tasks. ---
         for task in self._subagent_tasks:
             if not task.done():
                 task.cancel()
+        if self._subagent_tasks:
+            await asyncio.gather(*self._subagent_tasks, return_exceptions=True)
         self._subagent_tasks.clear()
         # TODO: SubagentManager integration — when subagents are spawned through
         # Session, register their tasks in self._subagent_tasks for cleanup.
