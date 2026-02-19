@@ -1,7 +1,7 @@
 # Wave 16a mock test coverage.
 #
 # §8.6  Multi-turn caching validation  -- cache_read_tokens > 50% by turn 5
-# §8.9  Cross-provider parity matrix   -- 15 scenarios × 3 providers = 45 cells
+# §8.9  Cross-provider parity matrix   -- 18 scenarios × 3 providers = 54 cells (15 spec + 3 bonus)
 # §8.10 Integration smoke test         -- 6-step e2e with mock adapters
 # rate  Rate-limit retry               -- 429 → retry → 200 for all 3 providers
 
@@ -18,6 +18,7 @@ from attractor_llm.adapters.openai import OpenAIAdapter
 from attractor_llm.client import Client
 from attractor_llm.errors import (
     AuthenticationError,
+    NotFoundError,
     RateLimitError,
     classify_http_error,
 )
@@ -117,9 +118,7 @@ class TestMultiTurnCachingValidation:
         usage_by_turn: list[Usage] = []
 
         for turn_idx in range(5):
-            result = await generate(
-                client, "mock-model", messages=history, provider="caching_mock"
-            )
+            result = await generate(client, "mock-model", messages=history, provider="caching_mock")
             usage = result.steps[-1].response.usage
             usage_by_turn.append(usage)
             history.append(result.steps[-1].response.message)
@@ -142,7 +141,8 @@ class TestMultiTurnCachingValidation:
         """First turn of a fresh session has zero cache_read_tokens."""
         _, client = _make_caching_client()
         result = await generate(
-            client, "mock-model",
+            client,
+            "mock-model",
             messages=[Message.user("hello")],
             provider="caching_mock",
         )
@@ -155,9 +155,7 @@ class TestMultiTurnCachingValidation:
         total_cache = 0
 
         for i in range(5):
-            result = await generate(
-                client, "mock-model", messages=history, provider="caching_mock"
-            )
+            result = await generate(client, "mock-model", messages=history, provider="caching_mock")
             total_cache += result.steps[-1].response.usage.cache_read_tokens
             history.append(result.steps[-1].response.message)
             if i < 4:
@@ -165,26 +163,61 @@ class TestMultiTurnCachingValidation:
 
         assert total_cache > 0, "Aggregate cache_read_tokens across 5 turns must be > 0"
 
+    def test_anthropic_adapter_injects_cache_control(self) -> None:
+        """Verify Anthropic adapter injects cache_control markers into request body.
+
+        Complements the mock-based caching tests by exercising the real adapter's
+        _inject_cache_control path, ensuring the adapter behaviour (not just the
+        mock return values) is tested.
+        """
+        adapter = AnthropicAdapter(ProviderConfig(api_key="test-key"))
+        request = Request(
+            model="claude-sonnet-4-5",
+            messages=[Message.user("Hello")],
+            system="You are helpful.",
+        )
+        body = adapter._translate_request(request)
+
+        # Anthropic encodes system as a list of typed text blocks
+        assert "system" in body, "Translated body must contain 'system' key"
+        assert isinstance(body["system"], list), "'system' must be a list of content blocks"
+        assert len(body["system"]) >= 1, "'system' list must have at least one entry"
+
+        # _inject_cache_control should stamp the last system block with cache_control
+        last_system = body["system"][-1]
+        assert "cache_control" in last_system, (
+            "cache_control should be injected on the last system content block; "
+            f"got keys: {list(last_system.keys())}"
+        )
+        assert last_system["cache_control"] == {"type": "ephemeral"}, (
+            f"cache_control value must be {{type: ephemeral}}, got {last_system['cache_control']}"
+        )
+
 
 # ================================================================== #
-# §8.9  Cross-provider parity matrix  (15 scenarios × 3 providers)
+# §8.9  Cross-provider parity matrix  (18 scenarios × 3 providers)
 # ================================================================== #
 
 SCENARIOS = [
+    # §8.9 spec rows (15 required)
     "basic_generation",
     "streaming",
+    "image_input_base64",
+    "image_input_url",
     "tool_calling_single",
     "tool_calling_parallel",
     "tool_calling_multi_step",
+    "streaming_with_tools",
     "structured_output",
-    "system_prompt",
     "reasoning_tokens",
-    "image_input",
-    "max_rounds",
     "error_handling",
-    "finish_reasons",
     "usage_tracking",
+    "prompt_caching",
     "provider_options",
+    # Bonus scenarios (beyond spec minimum)
+    "system_prompt",
+    "max_rounds",
+    "finish_reasons",
     "model_routing",
 ]
 PROVIDERS = ["openai", "anthropic", "gemini"]
@@ -258,7 +291,6 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
     adapter = _real_adapter(provider_name)
 
     match scenario:
-
         case "basic_generation":
             body = adapter._translate_request(_build_request(model))
             if provider_name == "openai":
@@ -345,7 +377,8 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
             body = adapter._translate_request(_build_request(model, system="You are a pirate."))
             if provider_name == "openai":
                 sys_items = [
-                    i for i in body.get("input", [])
+                    i
+                    for i in body.get("input", [])
                     if isinstance(i, dict) and i.get("role") == "system"
                 ]
                 assert sys_items, "System message must appear in OpenAI input items"
@@ -370,7 +403,54 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
                 budget = body.get("thinkingConfig", {}).get("thinkingBudget", 0)
                 assert budget > 0
 
-        case "image_input":
+        case "image_input_base64":
+            # §8.9 row 3: Image input (base64) -- inline PNG bytes
+            b64_msg = Message(
+                role=Role.USER,
+                content=[
+                    ContentPart(kind=ContentPartKind.TEXT, text="Describe this image."),
+                    ContentPart(
+                        kind=ContentPartKind.IMAGE,
+                        image=ImageData(data=b"\x89PNG\r\n\x1a\n", media_type="image/png"),
+                    ),
+                ],
+            )
+            body = adapter._translate_request(_build_request(model, messages=[b64_msg]))
+            if provider_name == "openai":
+                user_item = next(
+                    (
+                        i
+                        for i in body.get("input", [])
+                        if isinstance(i, dict) and i.get("role") == "user"
+                    ),
+                    None,
+                )
+                assert user_item is not None
+                assert any(
+                    isinstance(c, dict) and c.get("type") == "input_image"
+                    for c in user_item.get("content", [])
+                ), "Base64 image part must appear in OpenAI input"
+            elif provider_name == "anthropic":
+                user_msg = next(
+                    (m for m in body.get("messages", []) if m.get("role") == "user"),
+                    None,
+                )
+                assert user_msg is not None
+                assert any(
+                    isinstance(c, dict) and c.get("type") == "image"
+                    for c in user_msg.get("content", [])
+                ), "Base64 image block must appear in Anthropic message"
+            else:
+                user_c = next(
+                    (c for c in body.get("contents", []) if c.get("role") == "user"),
+                    None,
+                )
+                assert user_c is not None
+                assert any("inlineData" in p for p in user_c.get("parts", [])), (
+                    "Base64 image must use inlineData in Gemini contents"
+                )
+
+        case "image_input_url":
             image_url = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"
             img_msg = Message(
                 role=Role.USER,
@@ -385,8 +465,11 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
             body = adapter._translate_request(_build_request(model, messages=[img_msg]))
             if provider_name == "openai":
                 user_item = next(
-                    (i for i in body.get("input", [])
-                     if isinstance(i, dict) and i.get("role") == "user"),
+                    (
+                        i
+                        for i in body.get("input", [])
+                        if isinstance(i, dict) and i.get("role") == "user"
+                    ),
                     None,
                 )
                 assert user_item is not None
@@ -410,23 +493,28 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
                     None,
                 )
                 assert user_c is not None
-                assert any(
-                    "fileData" in p or "inlineData" in p
-                    for p in user_c.get("parts", [])
-                ), "Image part must appear in Gemini contents"
+                assert any("fileData" in p or "inlineData" in p for p in user_c.get("parts", [])), (
+                    "Image part must appear in Gemini contents"
+                )
 
         case "max_rounds":
             # max_rounds=1: 2 LLM calls allowed; second call returns text → done
             tool = _executing_tool()
-            mock = MockAdapter(responses=[
-                make_tool_call_response("my_tool", {}),
-                make_text_response("done in one round"),
-            ])
+            mock = MockAdapter(
+                responses=[
+                    make_tool_call_response("my_tool", {}),
+                    make_text_response("done in one round"),
+                ]
+            )
             cli = Client()
             cli.register_adapter("mock", mock)
             result = await generate(
-                cli, "mock-model", "do it",
-                tools=[tool], max_rounds=1, provider="mock",
+                cli,
+                "mock-model",
+                "do it",
+                tools=[tool],
+                max_rounds=1,
+                provider="mock",
             )
             assert result.text == "done in one round"
             assert mock.call_count == 2
@@ -459,12 +547,18 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
 
         case "usage_tracking":
             u1 = Usage(
-                input_tokens=100, output_tokens=50,
-                reasoning_tokens=10, cache_read_tokens=25, cache_write_tokens=5,
+                input_tokens=100,
+                output_tokens=50,
+                reasoning_tokens=10,
+                cache_read_tokens=25,
+                cache_write_tokens=5,
             )
             u2 = Usage(
-                input_tokens=200, output_tokens=100,
-                reasoning_tokens=20, cache_read_tokens=50, cache_write_tokens=10,
+                input_tokens=200,
+                output_tokens=100,
+                reasoning_tokens=20,
+                cache_read_tokens=50,
+                cache_write_tokens=10,
             )
             total = u1 + u2
             assert total.input_tokens == 300
@@ -499,6 +593,51 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
                 )
                 assert body.get("cachedContent") == "cache-001"
 
+        case "streaming_with_tools":
+            # §8.9 row 8: Streaming with tool calls declared
+            tool = _simple_tool()
+            mock = MockAdapter(responses=[make_text_response("streamed with tools")])
+            cli = Client()
+            cli.register_adapter("mock", mock)
+            req = Request(
+                model="mock-model",
+                messages=[Message.user("Answer directly, no tools needed.")],
+                tools=[tool],
+                provider="mock",
+            )
+            event_gen = await cli.stream(req)
+            kinds: set[StreamEventKind] = set()
+            async for ev in event_gen:
+                kinds.add(ev.kind)
+            assert StreamEventKind.START in kinds, (
+                f"[{provider_name}] streaming_with_tools: expected START event"
+            )
+            has_content = (
+                StreamEventKind.TEXT_DELTA in kinds or StreamEventKind.TOOL_CALL_START in kinds
+            )
+            assert has_content, (
+                f"[{provider_name}] streaming_with_tools: expected content event; got {kinds}"
+            )
+
+        case "prompt_caching":
+            # §8.9 row 14: cache_read_tokens > 0 on turn 2+
+            caching_adapter = CachingMockAdapter()
+            cli = Client()
+            cli.register_adapter("mock", caching_adapter)  # type: ignore[arg-type]
+            history: list[Message] = [Message.user("start")]
+
+            for i in range(2):
+                result = await generate(cli, "mock-model", messages=history, provider="mock")
+                history.append(result.steps[-1].response.message)
+                if i < 1:
+                    history.append(Message.user("continue"))
+
+            turn2_usage = result.steps[-1].response.usage  # noqa: F821
+            assert turn2_usage.cache_read_tokens > 0, (
+                f"[{provider_name}] prompt_caching: turn 2 cache_read_tokens must be > 0, "
+                f"got {turn2_usage.cache_read_tokens}"
+            )
+
         case "model_routing":
             mock_oa = MockAdapter(responses=[make_text_response("via openai")])
             mock_an = MockAdapter(responses=[make_text_response("via anthropic")])
@@ -525,14 +664,10 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
 
 @pytest.mark.parametrize(
     "scenario,provider_name",
-    [
-        pytest.param(s, p, id=f"{s}::{p}")
-        for s in SCENARIOS
-        for p in PROVIDERS
-    ],
+    [pytest.param(s, p, id=f"{s}::{p}") for s in SCENARIOS for p in PROVIDERS],
 )
 async def test_parity_matrix(scenario: str, provider_name: str) -> None:
-    """45-cell cross-provider parity matrix (§8.9)."""
+    """54-cell cross-provider parity matrix (§8.9)."""
     await _run_parity_cell(scenario, provider_name)
 
 
@@ -545,18 +680,20 @@ class TestIntegrationSmokeTest:
     """§8.10 – Six-step end-to-end smoke test using only mock adapters."""
 
     # ------------------------------------------------------------------ #
-    # Step 1: Basic generation
+    # Step 1: Basic generation -- §8.10 requires FOR EACH provider
     # ------------------------------------------------------------------ #
-    async def test_step1_basic_generation(self) -> None:
+    @pytest.mark.parametrize("provider_name", PROVIDERS)
+    async def test_step1_basic_generation(self, provider_name: str) -> None:
         mock = MockAdapter(responses=[make_text_response("Hello from the model!")])
         client = Client()
-        client.register_adapter("mock", mock)
+        client.register_adapter(provider_name, mock)
 
-        result = await generate(client, "mock-model", "Say hello.", provider="mock")
+        result = await generate(client, "mock-model", "Say hello.", provider=provider_name)
 
         assert result.text == "Hello from the model!"
         assert len(result.steps) == 1
         assert result.total_usage.input_tokens > 0
+        assert result.steps[-1].response.finish_reason == FinishReason.STOP
 
     # ------------------------------------------------------------------ #
     # Step 2: Streaming
@@ -596,16 +733,21 @@ class TestIntegrationSmokeTest:
             execute=lookup,
         )
 
-        mock = MockAdapter(responses=[
-            make_tool_call_response("search", {"query": "attractor project"}),
-            make_text_response("Found attractor project info."),
-        ])
+        mock = MockAdapter(
+            responses=[
+                make_tool_call_response("search", {"query": "attractor project"}),
+                make_text_response("Found attractor project info."),
+            ]
+        )
         client = Client()
         client.register_adapter("mock", mock)
 
         result = await generate(
-            client, "mock-model", "Search for attractor project.",
-            tools=[search_tool], provider="mock",
+            client,
+            "mock-model",
+            "Search for attractor project.",
+            tools=[search_tool],
+            provider="mock",
         )
 
         assert result.text == "Found attractor project info."
@@ -670,19 +812,19 @@ class TestIntegrationSmokeTest:
         assert data["age"] == 30
 
     # ------------------------------------------------------------------ #
-    # Step 6: Error handling
+    # Step 6: Error handling -- §8.10 requires NotFoundError for bad model
     # ------------------------------------------------------------------ #
     async def test_step6_error_handling(self) -> None:
-        err = RateLimitError("Too many requests", provider="mock", status_code=429)
+        err = NotFoundError("Model not found", provider="mock", status_code=404)
         mock = MockAdapter(responses=[err])
         client = Client(retry_policy=RetryPolicy(max_retries=0))
         client.register_adapter("mock", mock)
 
-        with pytest.raises(RateLimitError) as exc_info:
+        with pytest.raises(NotFoundError) as exc_info:
             await generate(client, "mock-model", "will fail", provider="mock")
 
-        assert exc_info.value.status_code == 429
-        assert exc_info.value.retryable is True
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.retryable is False
 
 
 # ================================================================== #
@@ -766,7 +908,9 @@ class TestRateLimitRetry:
 
     async def test_classify_429_anthropic_with_retry_after(self) -> None:
         err = classify_http_error(
-            429, "rate limited", "anthropic",
+            429,
+            "rate limited",
+            "anthropic",
             headers={"retry-after": "1.5"},
         )
         assert isinstance(err, RateLimitError)
