@@ -20,6 +20,7 @@ Usage::
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -165,9 +166,9 @@ def _rule_no_orphan_nodes(graph: Graph) -> list[Diagnostic]:
 
     # BFS from start to collect all reachable node IDs
     visited: set[str] = set()
-    queue: list[str] = [start.id]
+    queue: deque[str] = deque([start.id])
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         if current in visited:
             continue
         visited.add(current)
@@ -226,9 +227,9 @@ def _rule_exit_reachable_from_start(graph: Graph) -> list[Diagnostic]:
 
     # BFS from start
     visited: set[str] = set()
-    queue = [start.id]
+    queue: deque[str] = deque([start.id])
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         if current in visited:
             continue
         visited.add(current)

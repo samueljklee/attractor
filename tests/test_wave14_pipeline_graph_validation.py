@@ -226,6 +226,47 @@ class TestReachabilityRule:
         assert "orphan1" in reported_ids
         assert "orphan2" in reported_ids
 
+    def test_bfs_terminates_on_cyclic_graph(self) -> None:
+        """BFS must not loop infinitely when the graph contains a back-edge."""
+        start = Node(id="start", shape="Mdiamond")
+        a = Node(id="a", shape="box")
+        b = Node(id="b", shape="box")
+        exit_ = Node(id="exit", shape="Msquare")
+        graph = Graph(
+            nodes={"start": start, "a": a, "b": b, "exit": exit_},
+            edges=[
+                Edge(source="start", target="a"),
+                Edge(source="a", target="b"),
+                Edge(source="b", target="a"),  # back-edge / cycle
+                Edge(source="a", target="exit"),
+            ],
+        )
+        diagnostics = _rule_no_orphan_nodes(graph)
+        assert diagnostics == []  # all nodes are reachable despite cycle
+
+    def test_unreachable_cluster_with_internal_edges(self) -> None:
+        """Nodes with incoming edges from other unreachable nodes are still flagged.
+
+        This is the key case BFS catches that the old incoming-edge heuristic
+        missed: 'c' has an incoming edge (from 'b'), but neither 'b' nor 'c'
+        is reachable from start.
+        """
+        start = Node(id="start", shape="Mdiamond")
+        exit_ = Node(id="exit", shape="Msquare")
+        b = Node(id="b", shape="box")
+        c = Node(id="c", shape="box")
+        graph = Graph(
+            nodes={"start": start, "exit": exit_, "b": b, "c": c},
+            edges=[
+                Edge(source="start", target="exit"),
+                Edge(source="b", target="c"),  # internal edge in disconnected cluster
+            ],
+        )
+        diagnostics = _rule_no_orphan_nodes(graph)
+        unreachable = {d.node_id for d in diagnostics}
+        assert "b" in unreachable
+        assert "c" in unreachable  # old heuristic would miss this (c has incoming edge)
+
 
 # ---------------------------------------------------------------------------
 # P29: Handler-shape mapping correct (§2.8)

@@ -18,7 +18,7 @@ class NodeShape(StrEnum):
     """Known node shapes that map to handler types. Spec §2.4."""
 
     BOX = "box"  # codergen (LLM task)
-    HEXAGON = "hexagon"  # codergen (LLM task, alternative)
+    HEXAGON = "hexagon"  # manager (sub-pipeline orchestrator)
     DIAMOND = "diamond"  # conditional (branching)
     COMPONENT = "component"  # parallel (fan-out)
     TRIPLEOCTAGON = "tripleoctagon"  # fan-in (join)
