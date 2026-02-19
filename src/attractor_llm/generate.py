@@ -178,6 +178,13 @@ async def generate(
                     args = tc.arguments
                     if isinstance(args, str):
                         args = json.loads(args)
+                    # P9: Validate required fields against tool parameter schema (§8.7)
+                    if not isinstance(args, dict):
+                        kind = type(args).__name__
+                        return tc, f"ToolArgError: arguments must be a JSON object, got {kind}", True
+                    validation_error = _validate_tool_args(tool, args)
+                    if validation_error:
+                        return tc, validation_error, True
                     raw = await tool.execute(**args)
                     output = str(raw) if not isinstance(raw, str) else raw
                     return tc, output, False
@@ -359,4 +366,36 @@ def _find_tool(tools: list[Tool], name: str) -> Tool | None:
     for tool in tools:
         if tool.name == name:
             return tool
+    return None
+
+
+def _validate_tool_args(tool: Tool, args: dict[str, Any]) -> str | None:
+    """Validate tool call arguments against the tool's parameter schema. Spec §8.7.
+
+    Checks that all fields listed in ``parameters.required`` are present in
+    ``args``.  Deep JSON Schema validation (type checking, enum constraints,
+    etc.) is intentionally out of scope; this is a lightweight pre-flight
+    guard so callers get a clear error instead of a confusing KeyError inside
+    the execute handler.
+
+    Args:
+        tool: The Tool whose ``parameters`` schema to validate against.
+        args: Parsed (dict) arguments from the model's tool call.
+
+    Returns:
+        An error message string if validation fails, or ``None`` if valid.
+    """
+    schema = tool.parameters
+    if not schema:
+        return None  # no schema, nothing to validate
+
+    required: list[str] = schema.get("required", [])
+    if not required:
+        return None  # no required fields declared
+
+    missing = [field for field in required if field not in args]
+    if missing:
+        fields = ", ".join(repr(f) for f in missing)
+        return f"ToolArgError: missing required argument(s) {fields} for tool '{tool.name}'"
+
     return None

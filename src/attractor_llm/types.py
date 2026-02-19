@@ -466,10 +466,48 @@ class StepResult:
 
     Each step represents one round-trip to the LLM, potentially
     followed by tool executions.
+
+    The convenience properties below delegate to ``self.response`` so
+    callers can write ``step.text`` instead of ``step.response.text``.
+    All properties are read-only and produce no extra storage.
     """
 
     response: Response
     tool_results: list[ContentPart] = field(default_factory=list)
+
+    # ------------------------------------------------------------------ #
+    # P10: Spec §4.3 convenience accessors — delegate to response
+    # ------------------------------------------------------------------ #
+
+    @property
+    def text(self) -> str | None:
+        """First TEXT content from the response message."""
+        return self.response.text
+
+    @property
+    def reasoning(self) -> list[ContentPart]:
+        """All THINKING/reasoning content parts from the response."""
+        return self.response.reasoning
+
+    @property
+    def tool_calls(self) -> list[ContentPart]:
+        """All TOOL_CALL content parts from the response."""
+        return self.response.tool_calls
+
+    @property
+    def finish_reason(self) -> FinishReason:
+        """Why the model stopped generating."""
+        return self.response.finish_reason
+
+    @property
+    def usage(self) -> Usage:
+        """Token usage for this step."""
+        return self.response.usage
+
+    @property
+    def warnings(self) -> list[str]:
+        """Warnings emitted during this step (from the provider response)."""
+        return self.response.warnings
 
 
 @dataclass
