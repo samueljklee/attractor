@@ -685,14 +685,27 @@ async def _list_dir(path: str = ".", depth: int = 1) -> str:
     Depth semantics:
         0 = immediate children only (no recursion into subdirectories)
         1 = one level of subdirectories expanded (default)
-        N = N levels deep
+        N = N levels deep (capped at 5)
     """
+    depth = min(depth, 5)  # Cap to prevent enormous output
     dir_path = Path(path).expanduser().resolve()
 
-    if not dir_path.exists():
-        return f"Error: Path not found: {path}"
-    if not dir_path.is_dir():
-        return f"Error: Not a directory: {path}"
+    # Security: path confinement (skip for non-local -- container IS sandbox)
+    if isinstance(_environment, LocalEnvironment):
+        error = _check_path_allowed(dir_path)
+        if error:
+            return error
+        if not dir_path.exists():
+            return f"Error: Path not found: {path}"
+        if not dir_path.is_dir():
+            return f"Error: Not a directory: {path}"
+    else:
+        # Non-local: delegate to environment abstraction (flat listing only)
+        entries = await _environment.list_dir(str(dir_path))
+        if not entries:
+            return f"{path}/\n  (empty)"
+        formatted = "\n".join(f"  {e}" for e in entries)
+        return f"{path}/\n{formatted}"
 
     lines: list[str] = [f"{path}/"]
 
@@ -719,7 +732,7 @@ async def _list_dir(path: str = ".", depth: int = 1) -> str:
     return "\n".join(lines)
 
 
-LIST_DIR = Tool(
+LIST_DIR = _make_tool(
     name="list_dir",
     description="List directory contents with optional depth control.",
     parameters={
@@ -733,13 +746,13 @@ LIST_DIR = Tool(
                 "type": "integer",
                 "description": (
                     "Recursion depth. 0=immediate children only, "
-                    "1=one level deep. Default: 1."
+                    "1=one level deep (default). Max: 5."
                 ),
                 "default": 1,
             },
         },
     },
-    execute=_list_dir,
+    handler=_list_dir,
 )
 
 
@@ -758,8 +771,12 @@ async def _read_many_files(paths: list[str]) -> str:
         header = f"=== file: {path} ==="
         file_path = Path(path).expanduser().resolve()
 
-        # Check existence for local environments
+        # Security + existence checks for local environments
         if isinstance(_environment, LocalEnvironment):
+            error = _check_path_allowed(file_path)
+            if error:
+                parts.append(f"{header}\n{error}\n")
+                continue
             if not file_path.exists():
                 parts.append(f"{header}\nError: File not found: {path}\n")
                 continue
@@ -781,11 +798,10 @@ async def _read_many_files(paths: list[str]) -> str:
     return "\n".join(parts)
 
 
-READ_MANY_FILES = Tool(
+READ_MANY_FILES = _make_tool(
     name="read_many_files",
     description=(
-        "Read multiple files in a single call. "
-        "Returns concatenated content with file headers."
+        "Read multiple files in a single call. Returns concatenated content with file headers."
     ),
     parameters={
         "type": "object",
@@ -798,7 +814,7 @@ READ_MANY_FILES = Tool(
         },
         "required": ["paths"],
     },
-    execute=_read_many_files,
+    handler=_read_many_files,
 )
 
 

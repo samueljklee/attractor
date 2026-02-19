@@ -1,16 +1,39 @@
 """Tests for P15: Gemini profile tools – list_dir and read_many_files.
 
 Covers:
-- _list_dir: directory listing with depth control, error handling
-- _read_many_files: batch file reading with headers, graceful error handling
+- _list_dir: directory listing with depth control, error handling, path confinement
+- _read_many_files: batch file reading with headers, graceful error handling, path confinement
 - GeminiProfile.get_tools(): injects list_dir + read_many_files
 - Other profiles (Anthropic, OpenAI) do NOT get these tools injected
 """
 
 from __future__ import annotations
 
-from attractor_agent.tools.core import LIST_DIR, READ_MANY_FILES, _list_dir, _read_many_files
+import os
+
+import pytest
+
+from attractor_agent.tools.core import (
+    LIST_DIR,
+    READ_MANY_FILES,
+    _list_dir,
+    _read_many_files,
+    set_allowed_roots,
+)
 from attractor_llm.types import Tool
+
+# ------------------------------------------------------------------ #
+# Fixtures
+# ------------------------------------------------------------------ #
+
+
+@pytest.fixture(autouse=True)
+def _allow_tmp_path(tmp_path):
+    """Allow tmp_path in file tool roots so tests can use it freely."""
+    set_allowed_roots([str(tmp_path)])
+    yield
+    set_allowed_roots([os.getcwd()])
+
 
 # ------------------------------------------------------------------ #
 # Helpers
@@ -102,12 +125,14 @@ async def test_list_dir_depth_two_does_not_show_three_levels(tmp_path):
     assert "too_deep.py" not in result
 
 
-async def test_list_dir_nonexistent_path_returns_error():
+async def test_list_dir_nonexistent_path_returns_error(tmp_path):
     """Graceful error message for a path that does not exist."""
-    result = await _list_dir("/this/path/should/not/exist/ever", depth=0)
+    # Use a path inside allowed roots so we test the "not found" path,
+    # not the confinement path.
+    result = await _list_dir(str(tmp_path / "does_not_exist"), depth=0)
 
     assert "Error" in result
-    assert "not found" in result.lower() or "not found" in result
+    assert "not found" in result.lower()
 
 
 async def test_list_dir_file_path_returns_error(tmp_path):
@@ -153,6 +178,44 @@ async def test_list_dir_dirs_listed_with_trailing_slash(tmp_path):
     assert "adir/" in result
     # Regular files must NOT get a trailing slash
     assert "afile.py/" not in result
+
+
+# ------------------------------------------------------------------ #
+# _list_dir path confinement tests
+# ------------------------------------------------------------------ #
+
+
+async def test_list_dir_rejects_path_outside_allowed_roots(tmp_path):
+    """list_dir on a path outside allowed roots returns an error, not contents."""
+    result = await _list_dir("/etc", depth=0)
+
+    assert "Error" in result
+    assert "outside allowed" in result.lower() or "allowed" in result.lower()
+
+
+async def test_list_dir_allows_path_inside_allowed_roots(tmp_path):
+    """list_dir within the allowed root works normally."""
+    (tmp_path / "ok.txt").write_text("hi")
+
+    result = await _list_dir(str(tmp_path), depth=0)
+
+    assert "ok.txt" in result
+    assert "Error" not in result
+
+
+async def test_list_dir_caps_depth_at_five(tmp_path):
+    """Depth is capped at 5 to prevent enormous output."""
+    # Build a 7-level deep hierarchy
+    current = tmp_path
+    for i in range(7):
+        current = current / f"level{i}"
+        current.mkdir()
+    (current / "bottom.txt").write_text("x")
+
+    result = await _list_dir(str(tmp_path), depth=100)
+
+    # level6/bottom.txt is at depth 7, beyond the cap of 5
+    assert "bottom.txt" not in result
 
 
 # ------------------------------------------------------------------ #
@@ -253,6 +316,41 @@ async def test_read_many_files_multiple_headers_present(tmp_path):
 
     header_count = result.count("=== file:")
     assert header_count == 4
+
+
+# ------------------------------------------------------------------ #
+# _read_many_files path confinement tests
+# ------------------------------------------------------------------ #
+
+
+async def test_read_many_files_rejects_path_outside_allowed_roots(tmp_path):
+    """read_many_files on a path outside allowed roots returns a per-file error."""
+    result = await _read_many_files(["/etc/passwd"])
+
+    assert "Error" in result
+    assert "outside allowed" in result.lower() or "allowed" in result.lower()
+
+
+async def test_read_many_files_mixed_allowed_and_disallowed(tmp_path):
+    """Allowed files succeed, disallowed files get per-file errors."""
+    good = tmp_path / "good.txt"
+    good.write_text("safe content")
+
+    result = await _read_many_files([str(good), "/etc/passwd"])
+
+    assert "safe content" in result
+    assert "Error" in result  # /etc/passwd blocked
+
+
+async def test_read_many_files_allows_path_inside_allowed_roots(tmp_path):
+    """read_many_files within the allowed root works normally."""
+    f = tmp_path / "ok.txt"
+    f.write_text("allowed content")
+
+    result = await _read_many_files([str(f)])
+
+    assert "allowed content" in result
+    assert "outside allowed" not in result.lower()
 
 
 # ------------------------------------------------------------------ #
