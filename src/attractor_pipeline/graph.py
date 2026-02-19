@@ -124,6 +124,15 @@ class Graph:
     # All raw graph attributes
     attrs: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def label(self) -> str:
+        """Human-readable label for this graph. Spec §11.1.
+
+        The label is stored as a raw graph attribute in DOT (``graph [label="..."]``),
+        not as a typed field, so it is accessed via attrs with a safe default.
+        """
+        return self.attrs.get("label", "")
+
     def get_node(self, node_id: str) -> Node | None:
         """Look up a node by ID."""
         return self.nodes.get(node_id)

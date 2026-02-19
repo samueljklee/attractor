@@ -152,21 +152,37 @@ def _rule_exit_has_no_outgoing(graph: Graph) -> list[Diagnostic]:
 
 
 def _rule_no_orphan_nodes(graph: Graph) -> list[Diagnostic]:
-    """R05: Every non-start node should have at least one incoming edge."""
-    start = graph.get_start_node()
-    start_id = start.id if start else ""
-    results: list[Diagnostic] = []
+    """R05: Every node must be reachable from the start node via BFS.
 
-    for node in graph.nodes.values():
-        if node.id == start_id:
+    Spec §7.2: Uses BFS/DFS traversal from the start node rather than a
+    simple incoming-edge heuristic.  Unreachable nodes are reported as
+    ERROR (not WARNING) because they can never execute.
+    """
+    start = graph.get_start_node()
+    if start is None:
+        # R01 already reports the missing start node -- skip here.
+        return []
+
+    # BFS from start to collect all reachable node IDs
+    visited: set[str] = set()
+    queue: list[str] = [start.id]
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
             continue
-        incoming = graph.incoming_edges(node.id)
-        if not incoming:
+        visited.add(current)
+        for edge in graph.outgoing_edges(current):
+            if edge.target not in visited:
+                queue.append(edge.target)
+
+    results: list[Diagnostic] = []
+    for node in graph.nodes.values():
+        if node.id not in visited:
             results.append(
                 Diagnostic(
                     rule="R05",
-                    severity=Severity.WARNING,
-                    message=f"Node '{node.id}' has no incoming edges (orphan)",
+                    severity=Severity.ERROR,
+                    message=f"Node '{node.id}' is not reachable from the start node",
                     node_id=node.id,
                 )
             )

@@ -320,7 +320,10 @@ def _selector_matches(selector: Selector, node: Node) -> bool:
         case "shape":
             return node.shape == selector.value
         case "class":
-            return node.node_class == selector.value
+            # Spec §2.12: node classes are comma-separated (e.g., "code,critical").
+            # Split and check membership so ".code" matches "code,critical".
+            classes = [c.strip() for c in node.node_class.split(",") if c.strip()]
+            return selector.value in classes
         case "id":
             return node.id == selector.value
         case _:

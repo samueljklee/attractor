@@ -80,7 +80,12 @@ class Handler(Protocol):
         context: dict[str, Any],
         graph: Graph,
         logs_root: Path | None,
-        abort_signal: AbortSignal | None,
+        abort_signal: AbortSignal | None = None,
+        # NOTE: Deliberate extension beyond spec §3.3.
+        # Spec defines 4 params: (node, context, graph, logs_root).
+        # We add abort_signal as an optional 5th param for cooperative
+        # cancellation (Issue 4 design).  Defaulting to None preserves
+        # backward compatibility with the 4-param spec signature.
     ) -> HandlerResult: ...
 
 
@@ -336,9 +341,7 @@ def _write_node_artifacts(
             "failure_reason": result.failure_reason,
             "notes": result.notes,
         }
-        (node_dir / "status.json").write_text(
-            json.dumps(status_data, indent=2), encoding="utf-8"
-        )
+        (node_dir / "status.json").write_text(json.dumps(status_data, indent=2), encoding="utf-8")
 
         # prompt.md -- expanded prompt (codergen) or raw prompt (others)
         prompt = context.get(f"_artifact_prompt.{node.id}", "") or node.prompt or ""
@@ -394,10 +397,7 @@ def _check_aggregate_goal_gates(
         redirect_count += 1
 
         # Circuit breaker (Spec §3.4 + Issue 2 design)
-        if (
-            graph.max_goal_gate_redirects > 0
-            and redirect_count >= graph.max_goal_gate_redirects
-        ):
+        if graph.max_goal_gate_redirects > 0 and redirect_count >= graph.max_goal_gate_redirects:
             return (
                 "fail",
                 redirect_count,
@@ -651,11 +651,13 @@ async def run_pipeline(
         if current_node.shape == "Msquare":
             # Aggregate goal gate check: verify ALL visited goal-gate
             # nodes before allowing exit (Spec §3.4, §11.4).
-            agg_action, goal_gate_redirect_count, agg_payload = (
-                _check_aggregate_goal_gates(
-                    graph, completed_nodes, node_outcomes, ctx,
-                    goal_gate_redirect_count, start_time,
-                )
+            agg_action, goal_gate_redirect_count, agg_payload = _check_aggregate_goal_gates(
+                graph,
+                completed_nodes,
+                node_outcomes,
+                ctx,
+                goal_gate_redirect_count,
+                start_time,
             )
             if agg_action == "fail":
                 return agg_payload  # type: ignore[return-value]
