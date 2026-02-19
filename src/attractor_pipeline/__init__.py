@@ -5,18 +5,23 @@ DOT-based pipeline runner for orchestrating multi-stage AI workflows.
 
 from attractor_pipeline.conditions import evaluate_condition
 from attractor_pipeline.engine.runner import (
+    RETRY_PRESETS,
     Checkpoint,
     Handler,
     HandlerRegistry,
     HandlerResult,
     Outcome,
+    PipelineContext,
     PipelineResult,
     PipelineStatus,
+    get_retry_preset,
     run_pipeline,
     select_edge,
 )
 from attractor_pipeline.graph import Edge, Graph, Node, NodeShape
 from attractor_pipeline.handlers import (
+    Answer,
+    AutoApproveInterviewer,
     CallbackInterviewer,
     CodergenBackend,
     CodergenHandler,
@@ -24,10 +29,12 @@ from attractor_pipeline.handlers import (
     ExitHandler,
     HumanHandler,
     Interviewer,
+    Question,
     QuestionType,
     QueueInterviewer,
     StartHandler,
     ToolHandler,
+    ask_question_via_ask,
     register_default_handlers,
 )
 from attractor_pipeline.parser import parse_dot
@@ -59,11 +66,14 @@ __all__ = [
     "select_edge",
     "PipelineResult",
     "PipelineStatus",
+    "PipelineContext",
     "HandlerResult",
     "Outcome",
     "Handler",
     "HandlerRegistry",
     "Checkpoint",
+    "RETRY_PRESETS",
+    "get_retry_preset",
     # Handlers
     "StartHandler",
     "ExitHandler",
@@ -73,9 +83,13 @@ __all__ = [
     "CodergenBackend",
     "HumanHandler",
     "Interviewer",
+    "AutoApproveInterviewer",
     "CallbackInterviewer",
     "QueueInterviewer",
+    "Question",
+    "Answer",
     "QuestionType",
+    "ask_question_via_ask",
     "register_default_handlers",
     # Transforms (Spec §9, §11.11)
     "GraphTransform",

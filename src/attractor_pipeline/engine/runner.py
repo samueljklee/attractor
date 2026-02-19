@@ -17,6 +17,7 @@ Spec reference: attractor-spec §3.1-3.8.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from dataclasses import dataclass, field
@@ -67,9 +68,10 @@ def get_retry_preset(name: str) -> RetryPolicy | None:
     return RETRY_PRESETS.get(name)
 
 
-# Pipeline retry backoff policy (Spec §3.6) -- uses 'standard' preset so that
-# node-level retries get sensible exponential backoff by default.
-_PIPELINE_RETRY = RETRY_PRESETS["standard"]
+# Pipeline retry backoff policy (Spec §3.6) -- 'none' preserves existing
+# no-retry behaviour by default.  Callers can opt in via node-level config
+# or by passing a preset name.
+_PIPELINE_RETRY = RETRY_PRESETS["none"]
 
 
 # ------------------------------------------------------------------ #
@@ -297,8 +299,8 @@ class PipelineContext:
         return dict(self._data)
 
     def clone(self) -> PipelineContext:
-        """Return an independent copy of this context."""
-        return PipelineContext(_data=dict(self._data))
+        """Return an independent deep copy of this context."""
+        return PipelineContext(_data=copy.deepcopy(self._data))
 
     def apply_updates(self, updates: dict[str, Any]) -> None:
         """Merge *updates* into the context (last-write wins)."""

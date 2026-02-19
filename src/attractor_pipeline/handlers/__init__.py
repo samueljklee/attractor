@@ -14,11 +14,15 @@ from attractor_pipeline.handlers.basic import (
 )
 from attractor_pipeline.handlers.codergen import CodergenBackend, CodergenHandler
 from attractor_pipeline.handlers.human import (
+    Answer,
+    AutoApproveInterviewer,
     CallbackInterviewer,
     HumanHandler,
     Interviewer,
+    Question,
     QuestionType,
     QueueInterviewer,
+    ask_question_via_ask,
 )
 from attractor_pipeline.handlers.manager import ManagerHandler
 from attractor_pipeline.handlers.parallel import FanInHandler, ParallelHandler
@@ -32,9 +36,13 @@ __all__ = [
     "CodergenBackend",
     "HumanHandler",
     "Interviewer",
+    "AutoApproveInterviewer",
     "CallbackInterviewer",
     "QueueInterviewer",
+    "Question",
+    "Answer",
     "QuestionType",
+    "ask_question_via_ask",
     "ParallelHandler",
     "FanInHandler",
     "ManagerHandler",

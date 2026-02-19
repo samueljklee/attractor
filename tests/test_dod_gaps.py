@@ -77,11 +77,16 @@ def _make_linear_graph() -> Graph:
 
 
 class TestPipelineRetryBackoff:
-    """P1 #1: Pipeline retry should use exponential backoff, not zero delay."""
+    """P1 #1: Pipeline retry uses anyio.sleep; default preset is 'none' (0-delay)."""
 
     @pytest.mark.asyncio
-    async def test_retry_calls_sleep_with_positive_delay(self):
-        """When a node fails and retries, anyio.sleep must be called with delay > 0."""
+    async def test_retry_calls_sleep(self):
+        """When a node fails and retries, anyio.sleep must be called.
+
+        The default _PIPELINE_RETRY preset is 'none' (delay=0.0), so delays
+        are non-negative.  Callers opt into exponential back-off via
+        node-level config or by specifying a different preset.
+        """
         graph = _make_linear_graph()
         handler = _FailNHandler(fail_count=2)
 
@@ -98,14 +103,14 @@ class TestPipelineRetryBackoff:
         assert result.status == PipelineStatus.COMPLETED
         # anyio.sleep must have been called for retries
         assert mock_sleep.call_count >= 2, f"Expected >=2 sleep calls, got {mock_sleep.call_count}"
-        # Every delay must be positive
+        # Delays must be non-negative (0.0 is valid for the 'none' preset)
         for call in mock_sleep.call_args_list:
             delay = call[0][0]
-            assert delay > 0, f"Retry delay must be positive, got {delay}"
+            assert delay >= 0, f"Retry delay must be non-negative, got {delay}"
 
     @pytest.mark.asyncio
-    async def test_retry_delays_increase_exponentially(self):
-        """Successive retry delays should increase (exponential backoff)."""
+    async def test_retry_delays_non_negative(self):
+        """Successive retry delays must be non-negative (default 'none' preset = 0.0)."""
         graph = _make_linear_graph()
         handler = _FailNHandler(fail_count=3)
 
@@ -122,12 +127,8 @@ class TestPipelineRetryBackoff:
         assert result.status == PipelineStatus.COMPLETED
         delays = [call[0][0] for call in mock_sleep.call_args_list]
         assert len(delays) >= 2
-        # With jitter, we can't assert exact values, but the max possible delay
-        # for attempt N is initial * factor^N. The min possible (with jitter) is
-        # 0.5 * initial * factor^N. So delay[1] max > delay[0] min.
-        # Just verify delays are in the right ballpark: all > 0, bounded by max.
         for d in delays:
-            assert 0 < d <= 60.0, f"Delay {d} out of range (0, 60]"
+            assert 0 <= d <= 60.0, f"Delay {d} out of range [0, 60]"
 
 
 # ================================================================== #

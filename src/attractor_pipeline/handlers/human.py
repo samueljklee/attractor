@@ -93,9 +93,10 @@ class Interviewer(Protocol):
     Implementations handle how questions are presented to and
     answered by humans: console prompts, web UI, Slack, etc.
 
-    Two complementary APIs:
-    - ``ask()``          -- legacy flat-string API (backward compat).
-    - ``ask_question()`` -- structured Question → Answer API (Spec §6.1-6.3).
+    Only ``ask()`` is required by the protocol.  Concrete classes
+    typically also expose ``ask_question()`` (bridged via the module-level
+    ``ask_question_via_ask()`` helper) but external implementors that only
+    provide ``ask()`` remain fully compatible.
     """
 
     async def ask(
@@ -120,20 +121,34 @@ class Interviewer(Protocol):
         """
         ...
 
-    async def ask_question(self, question: Question) -> Answer:
-        """Ask the human a structured question and return a structured answer.
 
-        Spec §6.1-6.3.  Implementations that only override ``ask()`` can
-        use the mixin ``_ask_question_via_ask()`` helper (provided by concrete
-        classes) to avoid code duplication.
+# ------------------------------------------------------------------ #
+# Module-level bridge helper (Spec §6.1-6.3)
+# ------------------------------------------------------------------ #
 
-        Args:
-            question: Structured ``Question`` descriptor.
 
-        Returns:
-            Structured ``Answer`` with value, selected_option, and text.
-        """
-        ...
+async def ask_question_via_ask(interviewer: Interviewer, question: Question) -> Answer:
+    """Bridge from Question/Answer to the flat ask() API.
+
+    Concrete Interviewer implementations delegate their ``ask_question()``
+    body here to avoid repeating the same conversion logic in every class.
+    External implementors that only implement ``ask()`` can call this
+    helper directly without needing to subclass anything.
+
+    Args:
+        interviewer: Any object satisfying the ``Interviewer`` protocol.
+        question: Structured ``Question`` descriptor.
+
+    Returns:
+        Structured ``Answer`` with value, selected_option, and text.
+    """
+    value = await interviewer.ask(
+        question=question.text,
+        options=question.options,
+        question_type=question.question_type,
+    )
+    selected = value if (question.options and value in question.options) else None
+    return Answer(value=value, selected_option=selected, text=value)
 
 
 # ------------------------------------------------------------------ #
@@ -156,13 +171,7 @@ class AutoApproveInterviewer:
         return "approved"
 
     async def ask_question(self, question: Question) -> Answer:
-        value = await self.ask(
-            question=question.text,
-            options=question.options,
-            question_type=question.question_type,
-        )
-        selected = value if (question.options and value in question.options) else None
-        return Answer(value=value, selected_option=selected, text=value)
+        return await ask_question_via_ask(self, question)
 
 
 class ConsoleInterviewer:
@@ -186,13 +195,7 @@ class ConsoleInterviewer:
         return await asyncio.to_thread(input, prompt)
 
     async def ask_question(self, question: Question) -> Answer:
-        value = await self.ask(
-            question=question.text,
-            options=question.options,
-            question_type=question.question_type,
-        )
-        selected = value if (question.options and value in question.options) else None
-        return Answer(value=value, selected_option=selected, text=value)
+        return await ask_question_via_ask(self, question)
 
 
 class CallbackInterviewer:
@@ -221,13 +224,7 @@ class CallbackInterviewer:
         return await self._callback(question, options, node_id or None)
 
     async def ask_question(self, question: Question) -> Answer:
-        value = await self.ask(
-            question=question.text,
-            options=question.options,
-            question_type=question.question_type,
-        )
-        selected = value if (question.options and value in question.options) else None
-        return Answer(value=value, selected_option=selected, text=value)
+        return await ask_question_via_ask(self, question)
 
 
 class QueueInterviewer:
@@ -256,13 +253,7 @@ class QueueInterviewer:
         return answer
 
     async def ask_question(self, question: Question) -> Answer:
-        value = await self.ask(
-            question=question.text,
-            options=question.options,
-            question_type=question.question_type,
-        )
-        selected = value if (question.options and value in question.options) else None
-        return Answer(value=value, selected_option=selected, text=value)
+        return await ask_question_via_ask(self, question)
 
 
 class HumanHandler:

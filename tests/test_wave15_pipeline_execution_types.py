@@ -225,6 +225,17 @@ class TestPipelineContext:
         assert isinstance(log, list)
         assert log == ["step 1", "step 2"]
 
+    def test_pipeline_context_clone_deep_independence(self) -> None:
+        """clone() produces an independent deep copy -- nested mutables don't leak."""
+        from attractor_pipeline.engine.runner import PipelineContext
+
+        ctx = PipelineContext()
+        ctx.append_log("step-1")
+        clone = ctx.clone()
+        clone.append_log("step-2")
+        assert ctx.get("_log") == ["step-1"]  # original unaffected
+        assert clone.get("_log") == ["step-1", "step-2"]
+
     def test_pipeline_context_append_log_order_preserved(self) -> None:
         """append_log() preserves insertion order across many entries."""
         from attractor_pipeline.engine.runner import PipelineContext
