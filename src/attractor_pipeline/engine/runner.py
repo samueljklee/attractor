@@ -32,8 +32,44 @@ from attractor_pipeline.conditions import evaluate_condition
 from attractor_pipeline.graph import Edge, Graph, Node
 from attractor_pipeline.stylesheet import apply_stylesheet
 
-# Pipeline retry backoff policy (Spec §3.6)
-_PIPELINE_RETRY = RetryPolicy(initial_delay=0.2, max_retries=0)
+# ------------------------------------------------------------------ #
+# Retry presets (Spec §3.6, §11.5)
+# ------------------------------------------------------------------ #
+
+RETRY_PRESETS: dict[str, RetryPolicy] = {
+    "none": RetryPolicy(
+        max_retries=0, initial_delay=0.0, backoff_factor=1.0, max_delay=0.0, jitter=False
+    ),
+    "standard": RetryPolicy(
+        max_retries=3, initial_delay=1.0, backoff_factor=2.0, max_delay=30.0, jitter=True
+    ),
+    "aggressive": RetryPolicy(
+        max_retries=5, initial_delay=0.5, backoff_factor=1.5, max_delay=10.0, jitter=True
+    ),
+    "linear": RetryPolicy(
+        max_retries=3, initial_delay=2.0, backoff_factor=1.0, max_delay=60.0, jitter=False
+    ),
+    "patient": RetryPolicy(
+        max_retries=10, initial_delay=5.0, backoff_factor=2.0, max_delay=120.0, jitter=True
+    ),
+}
+
+
+def get_retry_preset(name: str) -> RetryPolicy | None:
+    """Return a named retry preset, or None if the name is unknown.
+
+    Args:
+        name: One of 'none', 'standard', 'aggressive', 'linear', 'patient'.
+
+    Returns:
+        The matching RetryPolicy, or None for unrecognised names.
+    """
+    return RETRY_PRESETS.get(name)
+
+
+# Pipeline retry backoff policy (Spec §3.6) -- uses 'standard' preset so that
+# node-level retries get sensible exponential backoff by default.
+_PIPELINE_RETRY = RETRY_PRESETS["standard"]
 
 
 # ------------------------------------------------------------------ #
@@ -222,6 +258,58 @@ class Checkpoint:
         """Load checkpoint from JSON file."""
         data = json.loads(path.read_text(encoding="utf-8"))
         return cls(**data)
+
+
+# ------------------------------------------------------------------ #
+# Pipeline context (Spec §5.1, §11.7)
+# ------------------------------------------------------------------ #
+
+
+@dataclass
+class PipelineContext:
+    """Typed context container for pipeline execution state. Spec §5.1.
+
+    Wraps a plain dict but exposes a structured interface with snapshot,
+    clone, and log-append operations.  The internal dict is the single
+    source of truth so existing code that holds a reference to
+    ``pipeline_ctx._data`` continues to work.
+
+    Backward compatibility: ``run_pipeline()`` still accepts a bare
+    ``dict[str, Any]`` and converts it internally.
+    """
+
+    _data: dict[str, Any] = field(default_factory=dict)
+
+    # ---- read/write ------------------------------------------------ #
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Return the value for *key*, or *default* if absent."""
+        return self._data.get(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        """Store *value* under *key*."""
+        self._data[key] = value
+
+    # ---- bulk operations ------------------------------------------- #
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a shallow copy of the current context."""
+        return dict(self._data)
+
+    def clone(self) -> PipelineContext:
+        """Return an independent copy of this context."""
+        return PipelineContext(_data=dict(self._data))
+
+    def apply_updates(self, updates: dict[str, Any]) -> None:
+        """Merge *updates* into the context (last-write wins)."""
+        self._data.update(updates)
+
+    # ---- audit log -------------------------------------------------- #
+
+    def append_log(self, entry: str) -> None:
+        """Append *entry* to the internal ``_log`` list."""
+        logs: list[str] = self._data.setdefault("_log", [])
+        logs.append(entry)
 
 
 # ------------------------------------------------------------------ #
@@ -431,7 +519,7 @@ async def run_pipeline(
     graph: Graph,
     handlers: HandlerRegistry,
     *,
-    context: dict[str, Any] | None = None,
+    context: dict[str, Any] | PipelineContext | None = None,
     abort_signal: AbortSignal | None = None,
     logs_root: Path | None = None,
     checkpoint: Checkpoint | None = None,
@@ -450,7 +538,10 @@ async def run_pipeline(
     Args:
         graph: The parsed pipeline graph.
         handlers: Registry of node handlers.
-        context: Initial pipeline context (mutable dict).
+        context: Initial pipeline context -- accepts a bare ``dict[str, Any]``
+            (legacy) or a ``PipelineContext`` (Spec §5.1, §11.7).  A bare dict
+            is wrapped in a ``PipelineContext`` automatically so all downstream
+            code can rely on the structured interface.
         abort_signal: Cooperative cancellation signal.
         logs_root: Directory for logs and artifacts.
         checkpoint: Resume from a saved checkpoint.
@@ -462,7 +553,14 @@ async def run_pipeline(
         PipelineResult with final status, context, and metadata.
     """
     abort = abort_signal or AbortSignal()
-    ctx = dict(context or {})
+
+    # Accept dict or PipelineContext; always work on the underlying dict so
+    # existing engine helpers that expect a plain dict need no changes.
+    if isinstance(context, PipelineContext):
+        pipeline_context = context
+    else:
+        pipeline_context = PipelineContext(_data=dict(context or {}))
+    ctx = pipeline_context._data  # noqa: SLF001  -- internal access by design
     start_time = time.monotonic()
 
     # Apply graph transforms before validation (Spec §9, §11.11)
