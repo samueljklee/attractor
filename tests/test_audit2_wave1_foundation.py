@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Item 1 - Jitter range Sec 8.8.3
 # ---------------------------------------------------------------------------
@@ -73,9 +72,7 @@ class TestJitterRange:
         finally:
             random.random = original  # type: ignore[assignment]
 
-        assert d == pytest.approx(15.0), (
-            f"With rng=1.0 expected 10.0*(0.5+1.0*1.0)=15.0, got {d}"
-        )
+        assert d == pytest.approx(15.0), f"With rng=1.0 expected 10.0*(0.5+1.0*1.0)=15.0, got {d}"
 
     def test_jitter_lower_bound_is_0_5x(self) -> None:
         """Formula must be delay*(0.5 + rng*1.0) so the floor is 0.5."""
@@ -91,9 +88,7 @@ class TestJitterRange:
         finally:
             random.random = original  # type: ignore[assignment]
 
-        assert d == pytest.approx(5.0), (
-            f"With rng=0.0 expected 10.0*(0.5+0.0*1.0)=5.0, got {d}"
-        )
+        assert d == pytest.approx(5.0), f"With rng=0.0 expected 10.0*(0.5+0.0*1.0)=5.0, got {d}"
 
 
 # ---------------------------------------------------------------------------
@@ -239,9 +234,7 @@ class TestOpenAISystemInstructions:
         body = adapter._translate_request(req)
 
         for item in body.get("input", []):
-            assert item.get("role") != "system", (
-                f"Found system role in input array: {item}"
-            )
+            assert item.get("role") != "system", f"Found system role in input array: {item}"
 
     def test_multiple_system_messages_concatenated(self) -> None:
         """Multiple system messages are joined with double-newline."""
@@ -293,6 +286,53 @@ class TestOpenAISystemInstructions:
 
         user_items = [i for i in body.get("input", []) if i.get("role") == "user"]
         assert user_items, "User message missing from input array"
+
+    def test_openai_system_empty_text_omits_instructions(self) -> None:
+        """Message.system('') is a degenerate case -- 'instructions' must be absent.
+
+        Sending an empty instructions string to the API has no semantic value.
+        This is documented intentional behaviour, not a bug: when system messages
+        exist but yield no extractable text we omit the key entirely rather than
+        sending an empty string.
+        """
+        from attractor_llm.types import Message, Request
+
+        adapter = self._make_adapter()
+        req = Request(
+            model="gpt-4o",
+            messages=[
+                Message.system(""),
+                Message.user("Hello."),
+            ],
+        )
+        body = adapter._translate_request(req)
+
+        assert "instructions" not in body, (
+            f"'instructions' must be absent for empty system text, "
+            f"got: {body.get('instructions')!r}"
+        )
+
+    def test_openai_system_only_request_works(self) -> None:
+        """A request with only a system message (no user messages) translates correctly.
+
+        'instructions' must be populated from the system message text.
+        'input' may be an empty list -- that is valid for the Responses API.
+        """
+        from attractor_llm.types import Message, Request
+
+        adapter = self._make_adapter()
+        req = Request(
+            model="gpt-4o",
+            messages=[
+                Message.system("Be helpful."),
+            ],
+        )
+        body = adapter._translate_request(req)
+
+        assert "instructions" in body, "'instructions' must be set from system message"
+        assert "Be helpful." in body["instructions"]
+        # input may be empty but must be present
+        assert "input" in body, "'input' key must always be present"
 
 
 # ---------------------------------------------------------------------------
@@ -425,9 +465,5 @@ class TestMultipleExitNodes:
 
         graph = self._make_graph(1)
         diags = _rule_has_exit_node(graph)
-        multi_exit_diags = [
-            d for d in diags if "exit nodes but exactly one" in d.message
-        ]
-        assert multi_exit_diags == [], (
-            f"False-positive multi-exit diagnostic: {multi_exit_diags}"
-        )
+        multi_exit_diags = [d for d in diags if "exit nodes but exactly one" in d.message]
+        assert multi_exit_diags == [], f"False-positive multi-exit diagnostic: {multi_exit_diags}"

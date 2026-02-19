@@ -102,6 +102,11 @@ class OpenAIAdapter:
             ]
             if system_texts:
                 body["instructions"] = "\n\n".join(system_texts)
+            # Intentional: if system messages were present but yielded no text
+            # (e.g. Message.system("") -- a degenerate case), we omit
+            # `instructions` entirely rather than sending an empty string to
+            # the API.  Empty instructions have no semantic value and some
+            # providers reject blank instruction fields.
 
         # Max tokens
         if request.max_tokens is not None:
