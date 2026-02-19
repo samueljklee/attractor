@@ -610,7 +610,10 @@ class AnthropicAdapter:
             case "content_block_start":
                 cb = data.get("content_block", {})
                 cb_type = cb.get("type")
-                if cb_type == "tool_use":
+                if cb_type == "text":
+                    # §3.14: bracket text blocks with TEXT_START / TEXT_END
+                    yield StreamEvent(kind=StreamEventKind.TEXT_START)
+                elif cb_type == "tool_use":
                     yield StreamEvent(
                         kind=StreamEventKind.TOOL_CALL_START,
                         tool_call_id=cb.get("id", ""),
@@ -645,7 +648,10 @@ class AnthropicAdapter:
                         )
 
             case "content_block_stop":
-                if block_type == "tool_use":
+                if block_type == "text":
+                    # §3.14: close the text block
+                    yield StreamEvent(kind=StreamEventKind.TEXT_END)
+                elif block_type == "tool_use":
                     yield StreamEvent(
                         kind=StreamEventKind.TOOL_CALL_END,
                         tool_call_id=block_id,

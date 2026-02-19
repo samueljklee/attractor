@@ -294,7 +294,19 @@ class MiddlewareClient:
         return resp
 
     async def stream(self, request: Request) -> Any:
-        """Stream passes through to the underlying client (no middleware)."""
+        """Stream passes through to the underlying client without middleware.
+
+        DESIGN GAP (§8.1.6): Middleware is NOT applied on the streaming path.
+        Wrapping an async generator with before_request / after_response hooks
+        is non-trivial:
+          - before_request can run eagerly before the generator starts (easy).
+          - after_response needs a fully-accumulated Response, which means the
+            caller would have to consume the entire stream first -- negating the
+            value of streaming.
+        A proper solution would require a streaming-aware middleware protocol
+        (e.g., per-event hooks or an on_stream_complete callback). That design
+        work is deferred; for now streaming bypasses all middleware.
+        """
         return await self._client.stream(request)
 
     def register_adapter(self, name: str, adapter: Any) -> None:

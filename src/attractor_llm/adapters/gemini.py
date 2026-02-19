@@ -470,6 +470,9 @@ class GeminiAdapter:
     ) -> AsyncIterator[StreamEvent]:
         """Parse Gemini SSE stream into unified StreamEvents."""
         has_seen_tool_call = False
+        # §3.14: track whether we are inside an open text block
+        _in_text_block: bool = False
+
         async for line in http_response.aiter_lines():
             line = line.strip()
 
@@ -513,6 +516,10 @@ class GeminiAdapter:
                                 text=part["text"],
                             )
                         else:
+                            # §3.14: emit TEXT_START before the first TEXT_DELTA
+                            if not _in_text_block:
+                                yield StreamEvent(kind=StreamEventKind.TEXT_START)
+                                _in_text_block = True
                             yield StreamEvent(
                                 kind=StreamEventKind.TEXT_DELTA,
                                 text=part["text"],
@@ -547,6 +554,10 @@ class GeminiAdapter:
                     fr = self._map_finish_reason(finish_reason_str)
                     if fr == FinishReason.STOP and has_seen_tool_call:
                         fr = FinishReason.TOOL_CALLS
+                    # §3.14: close any open text block before FINISH
+                    if _in_text_block:
+                        yield StreamEvent(kind=StreamEventKind.TEXT_END)
+                        _in_text_block = False
                     yield StreamEvent(
                         kind=StreamEventKind.FINISH,
                         finish_reason=fr,

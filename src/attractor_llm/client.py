@@ -51,12 +51,15 @@ class Client:
         providers: Mapping[str, ProviderAdapter] | None = None,
         default_provider: str | None = None,
         retry_policy: RetryPolicy | None = None,
+        # DEPRECATED: the `middleware` parameter is accepted but never applied.
+        # Client.complete() does not run middleware; use apply_middleware() from
+        # attractor_llm.middleware to wrap the client instead (§8.1.6).
         middleware: list[Middleware] | None = None,
     ) -> None:
         self._adapters: dict[str, ProviderAdapter] = {}
         self._default_provider: str | None = default_provider
         self._retry_policy = retry_policy or RetryPolicy()
-        self._middleware = middleware or []
+        self._middleware = middleware or []  # stored but not applied (see above)
         if providers:
             for provider_name, adapter in providers.items():
                 self.register_adapter(provider_name, adapter)
