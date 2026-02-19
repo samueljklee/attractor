@@ -102,7 +102,7 @@ def _rule_has_start_node(graph: Graph) -> list[Diagnostic]:
 
 
 def _rule_has_exit_node(graph: Graph) -> list[Diagnostic]:
-    """R02: Graph must have at least one exit node (shape=Msquare)."""
+    """R02: Graph must have exactly one exit node (shape=Msquare). Spec §11.2.2."""
     exit_nodes = graph.get_exit_nodes()
     if not exit_nodes:
         return [
@@ -110,6 +110,15 @@ def _rule_has_exit_node(graph: Graph) -> list[Diagnostic]:
                 rule="R02",
                 severity=Severity.ERROR,
                 message="Graph has no exit node (shape=Msquare)",
+            )
+        ]
+    if len(exit_nodes) > 1:
+        n = len(exit_nodes)
+        return [
+            Diagnostic(
+                rule="R02",
+                severity=Severity.ERROR,
+                message=f"Graph has {n} exit nodes but exactly one is required.",
             )
         ]
     return []
@@ -155,9 +164,9 @@ def _rule_exit_has_no_outgoing(graph: Graph) -> list[Diagnostic]:
 def _rule_no_orphan_nodes(graph: Graph) -> list[Diagnostic]:
     """R05: Every node must be reachable from the start node via BFS.
 
-    Spec §7.2: Uses BFS/DFS traversal from the start node rather than a
-    simple incoming-edge heuristic.  Unreachable nodes are reported as
-    ERROR (not WARNING) because they can never execute.
+    Spec §7.2 / §11.12.6: Uses BFS/DFS traversal from the start node rather
+    than a simple incoming-edge heuristic.  Unreachable nodes are reported as
+    WARNING (not ERROR) per spec DoD §11.12.6.
     """
     start = graph.get_start_node()
     if start is None:
@@ -182,7 +191,7 @@ def _rule_no_orphan_nodes(graph: Graph) -> list[Diagnostic]:
             results.append(
                 Diagnostic(
                     rule="R05",
-                    severity=Severity.ERROR,
+                    severity=Severity.WARNING,
                     message=f"Node '{node.id}' is not reachable from the start node",
                     node_id=node.id,
                 )

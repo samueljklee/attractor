@@ -162,7 +162,7 @@ class TestRetryPolicy:
 
     def test_compute_delay_with_jitter(self):
         p = RetryPolicy(initial_delay=2.0, jitter=True)
-        # With jitter, delay should be in [1.0, 2.0] (equal jitter)
+        # With +-50% jitter (Spec Sec 8.8.3), delay is in [1.0, 3.0] for base=2.0
         for _ in range(20):
             d = p.compute_delay(0)
-            assert 1.0 <= d <= 2.0
+            assert 1.0 <= d <= 3.0

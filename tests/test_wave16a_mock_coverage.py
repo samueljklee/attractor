@@ -376,12 +376,21 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
         case "system_prompt":
             body = adapter._translate_request(_build_request(model, system="You are a pirate."))
             if provider_name == "openai":
-                sys_items = [
+                # Spec Sec 8.2.5/8.2.6: system messages go to top-level `instructions`,
+                # NOT as {role:system} items inside `input`.
+                instructions = body.get("instructions", "")
+                assert "pirate" in instructions.lower(), (
+                    f"System prompt must appear in body['instructions'], got: {instructions!r}"
+                )
+                # Verify it did NOT leak into the input array
+                sys_in_input = [
                     i
                     for i in body.get("input", [])
                     if isinstance(i, dict) and i.get("role") == "system"
                 ]
-                assert sys_items, "System message must appear in OpenAI input items"
+                assert not sys_in_input, (
+                    f"System message must not appear in input array, found: {sys_in_input}"
+                )
             elif provider_name == "anthropic":
                 parts = body.get("system", [])
                 text = " ".join(p.get("text", "") for p in parts)

@@ -79,12 +79,29 @@ class OpenAIAdapter:
     def _translate_request(self, request: Request) -> dict[str, Any]:
         """Translate unified Request to OpenAI Responses API body. Spec §7.2."""
         messages = request.effective_messages()
-        input_items = self._translate_input_items(messages)
+
+        # Responses API requires system instructions in top-level `instructions`
+        # field, NOT as {role:system} items inside `input`. Spec §8.2.5, §8.2.6.
+        system_messages = [m for m in messages if m.role == Role.SYSTEM]
+        non_system_messages = [m for m in messages if m.role != Role.SYSTEM]
+
+        input_items = self._translate_input_items(non_system_messages)
 
         body: dict[str, Any] = {
             "model": request.model,
             "input": input_items,
         }
+
+        # Concatenate all system message text into instructions field
+        if system_messages:
+            system_texts = [
+                part.text
+                for m in system_messages
+                for part in m.content
+                if part.kind == ContentPartKind.TEXT and part.text
+            ]
+            if system_texts:
+                body["instructions"] = "\n\n".join(system_texts)
 
         # Max tokens
         if request.max_tokens is not None:

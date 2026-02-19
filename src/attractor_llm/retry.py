@@ -22,10 +22,10 @@ T = TypeVar("T")
 class RetryPolicy:
     """Configuration for retry behavior with exponential backoff.
 
-    The jitter strategy is "equal jitter": delay is uniformly distributed
-    in [0.5 * computed_delay, 1.0 * computed_delay]. This prevents
+    The jitter strategy is "±50% jitter": delay is uniformly distributed
+    in [0.5 * computed_delay, 1.5 * computed_delay]. This prevents
     thundering-herd effects while keeping delays reasonably close to
-    the computed backoff.
+    the computed backoff. Spec §8.8.3.
     """
 
     max_retries: int = 3
@@ -39,8 +39,8 @@ class RetryPolicy:
         delay = self.initial_delay * (self.backoff_factor**attempt)
         delay = min(delay, self.max_delay)
         if self.jitter:
-            # Equal jitter: uniform in [delay/2, delay]
-            delay = delay * (0.5 + random.random() * 0.5)  # noqa: S311
+            # ±50% jitter: uniform in [delay*0.5, delay*1.5]  Spec §8.8.3
+            delay = delay * (0.5 + random.random() * 1.0)  # noqa: S311
         return delay
 
 

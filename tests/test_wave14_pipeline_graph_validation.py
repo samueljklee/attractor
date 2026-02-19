@@ -163,14 +163,17 @@ class TestReachabilityRule:
         diagnostics = _rule_no_orphan_nodes(graph)
         assert diagnostics == []
 
-    def test_reachability_severity_is_error(self) -> None:
-        """Every R05 diagnostic from an unreachable node has ERROR severity."""
+    def test_reachability_severity_is_warning(self) -> None:
+        """Every R05 diagnostic from an unreachable node has WARNING severity.
+
+        Spec DoD §11.12.6 changed this from ERROR to WARNING.
+        """
         graph = self._graph_with_island()
         diagnostics = _rule_no_orphan_nodes(graph)
         assert diagnostics, "Expected at least one diagnostic"
         for d in diagnostics:
-            assert d.severity == Severity.ERROR, (
-                f"Got {d.severity!r} for node {d.node_id!r}; expected ERROR"
+            assert d.severity == Severity.WARNING, (
+                f"Got {d.severity!r} for node {d.node_id!r}; expected WARNING"
             )
 
     def test_reachability_rule_code_is_r05(self) -> None:

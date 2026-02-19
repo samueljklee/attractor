@@ -403,7 +403,7 @@ class Response(BaseModel):
 
 
 class StreamEventKind(StrEnum):
-    """Stream event types. Spec §3.13."""
+    """Stream event types. Spec §3.13 / §3.14."""
 
     START = "start"
     TEXT_START = "text_start"
@@ -419,6 +419,9 @@ class StreamEventKind(StrEnum):
     FINISH = "finish"
     ERROR = "error"
     PROVIDER_EVENT = "provider_event"
+    # Spec §3.14 canonical names (preferred for new code; START/FINISH kept for compat)
+    STREAM_START = "stream_start"
+    STREAM_END = "stream_end"
 
 
 class StreamEvent(BaseModel):
