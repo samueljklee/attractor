@@ -22,6 +22,7 @@ from attractor_llm.errors import InvalidRequestError
 from attractor_llm.types import (
     AudioData,
     ContentPart,
+    ContentPartKind,
     DocumentData,
     Message,
     Request,
@@ -249,20 +250,13 @@ class TestOpenAIUnknownPartKindRaises:
         """Ensure no '[unsupported: audio]' text leaks through."""
         msg = _user_msg(AUDIO_PART_INLINE)
         with pytest.raises(InvalidRequestError):
-            result = self.adapter._translate_user_content(msg)
-            # If it somehow didn't raise, check there's no placeholder
-            if isinstance(result, list):
-                for part in result:
-                    assert "[unsupported:" not in str(part), f"Silent degradation detected: {part}"
+            self.adapter._translate_user_content(msg)
 
     def test_no_placeholder_text_for_document(self) -> None:
         """Ensure no '[unsupported: document]' text leaks through."""
         msg = _user_msg(DOCUMENT_PART_INLINE)
         with pytest.raises(InvalidRequestError):
-            result = self.adapter._translate_user_content(msg)
-            if isinstance(result, list):
-                for part in result:
-                    assert "[unsupported:" not in str(part), f"Silent degradation detected: {part}"
+            self.adapter._translate_user_content(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -360,11 +354,7 @@ class TestNoMoreSilentDegradation:
     def test_anthropic_audio_no_placeholder(self) -> None:
         adapter = AnthropicAdapter(_CONFIG)
         with pytest.raises(InvalidRequestError):
-            result = adapter._translate_content_part(AUDIO_PART_INLINE, Role.USER)
-            # If no exception, assert no placeholder
-            assert not self._contains_placeholder(result), (
-                f"Anthropic silently degraded audio: {result}"
-            )
+            adapter._translate_content_part(AUDIO_PART_INLINE, Role.USER)
 
     def test_anthropic_document_no_placeholder(self) -> None:
         adapter = AnthropicAdapter(_CONFIG)
@@ -379,21 +369,13 @@ class TestNoMoreSilentDegradation:
         adapter = OpenAIAdapter(_CONFIG)
         msg = _user_msg(AUDIO_PART_INLINE)
         with pytest.raises(InvalidRequestError):
-            result = adapter._translate_user_content(msg)
-            if isinstance(result, list):
-                assert not self._contains_placeholder(result), (
-                    f"OpenAI silently degraded audio: {result}"
-                )
+            adapter._translate_user_content(msg)
 
     def test_openai_document_no_placeholder(self) -> None:
         adapter = OpenAIAdapter(_CONFIG)
         msg = _user_msg(DOCUMENT_PART_INLINE)
         with pytest.raises(InvalidRequestError):
-            result = adapter._translate_user_content(msg)
-            if isinstance(result, list):
-                assert not self._contains_placeholder(result), (
-                    f"OpenAI silently degraded document: {result}"
-                )
+            adapter._translate_user_content(msg)
 
     # -- OpenAI-compat: should raise --
 
@@ -401,20 +383,13 @@ class TestNoMoreSilentDegradation:
         adapter = OpenAICompatAdapter(_CONFIG)
         request = _make_request(AUDIO_PART_INLINE)
         with pytest.raises(InvalidRequestError):
-            self.adapter = adapter  # noqa: B012 -- inside pytest.raises block
-            result = adapter._build_request_body(request)
-            assert not self._contains_placeholder(result), (
-                f"OpenAI-compat silently degraded audio: {result}"
-            )
+            adapter._build_request_body(request)
 
     def test_openai_compat_document_no_placeholder(self) -> None:
         adapter = OpenAICompatAdapter(_CONFIG)
         request = _make_request(DOCUMENT_PART_INLINE)
         with pytest.raises(InvalidRequestError):
-            result = adapter._build_request_body(request)
-            assert not self._contains_placeholder(result), (
-                f"OpenAI-compat silently degraded document: {result}"
-            )
+            adapter._build_request_body(request)
 
     # -- Anthropic case _: no longer emits placeholder --
 
@@ -478,3 +453,79 @@ class TestGeminiFullRequestTranslation:
         assert "inlineData" in parts[1]
         assert parts[1]["inlineData"]["mimeType"] == "application/pdf"
         assert base64.b64decode(parts[1]["inlineData"]["data"]) == DOCUMENT_BYTES
+
+
+# ---------------------------------------------------------------------------
+# Edge-case tests: None / empty payloads raise InvalidRequestError
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiAudioEdgeCases:
+    """Gemini raises on None audio payload or AudioData with no data and no url."""
+
+    def setup_method(self) -> None:
+        self.adapter = GeminiAdapter(_CONFIG)
+
+    def test_gemini_audio_none_payload_raises(self) -> None:
+        """AUDIO part with audio=None must raise, not silently return None.
+
+        Uses model_construct to bypass Pydantic validation so we can reach
+        the adapter's defensive guard directly.
+        """
+        part = ContentPart.model_construct(kind=ContentPartKind.AUDIO, audio=None)
+        with pytest.raises(InvalidRequestError, match="no audio payload"):
+            self.adapter._translate_part(part)
+
+    def test_gemini_audio_no_data_no_url_raises(self) -> None:
+        """AudioData with neither data nor url must raise.
+
+        Uses model_construct to bypass Pydantic validation on AudioData.
+        """
+        audio = AudioData.model_construct(data=None, url=None, media_type="audio/wav")
+        part = ContentPart.model_construct(kind=ContentPartKind.AUDIO, audio=audio)
+        with pytest.raises(InvalidRequestError, match="no data and no url"):
+            self.adapter._translate_part(part)
+
+
+class TestGeminiDocumentEdgeCases:
+    """Gemini raises on None document payload or DocumentData with no data and no url."""
+
+    def setup_method(self) -> None:
+        self.adapter = GeminiAdapter(_CONFIG)
+
+    def test_gemini_document_none_payload_raises(self) -> None:
+        """DOCUMENT part with document=None must raise, not silently return None.
+
+        Uses model_construct to bypass Pydantic validation so we can reach
+        the adapter's defensive guard directly.
+        """
+        part = ContentPart.model_construct(kind=ContentPartKind.DOCUMENT, document=None)
+        with pytest.raises(InvalidRequestError, match="no document payload"):
+            self.adapter._translate_part(part)
+
+    def test_gemini_document_no_data_no_url_raises(self) -> None:
+        """DocumentData with neither data nor url must raise.
+
+        Uses model_construct to bypass Pydantic validation on DocumentData.
+        """
+        doc = DocumentData.model_construct(data=None, url=None, media_type="application/pdf")
+        part = ContentPart.model_construct(kind=ContentPartKind.DOCUMENT, document=doc)
+        with pytest.raises(InvalidRequestError, match="no data and no url"):
+            self.adapter._translate_part(part)
+
+
+class TestAnthropicDocumentEdgeCases:
+    """Anthropic raises on None document payload."""
+
+    def setup_method(self) -> None:
+        self.adapter = AnthropicAdapter(_CONFIG)
+
+    def test_anthropic_document_none_payload_raises(self) -> None:
+        """DOCUMENT part with document=None must raise with a clear message.
+
+        Uses model_construct to bypass Pydantic validation so we can reach
+        the adapter's defensive guard directly.
+        """
+        part = ContentPart.model_construct(kind=ContentPartKind.DOCUMENT, document=None)
+        with pytest.raises(InvalidRequestError, match="no document payload"):
+            self.adapter._translate_content_part(part, Role.USER)

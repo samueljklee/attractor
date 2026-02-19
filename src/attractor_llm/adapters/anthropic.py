@@ -253,7 +253,11 @@ class AnthropicAdapter:
                 }
 
             case ContentPartKind.DOCUMENT:
-                if part.document and part.document.data:
+                if not part.document:
+                    raise InvalidRequestError(
+                        "DOCUMENT content part has no document payload", provider="anthropic"
+                    )
+                if part.document.data:
                     import base64
 
                     return {
@@ -265,7 +269,8 @@ class AnthropicAdapter:
                         },
                     }
                 raise InvalidRequestError(
-                    "Anthropic requires document data as base64, not URL",
+                    "Anthropic requires document data as base64;"
+                    " URL-only documents are not supported",
                     provider="anthropic",
                 )
 

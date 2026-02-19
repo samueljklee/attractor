@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from attractor_llm.errors import classify_http_error
+from attractor_llm.errors import InvalidRequestError, classify_http_error
 from attractor_llm.types import (
     ContentPart,
     ContentPartKind,
@@ -247,7 +247,11 @@ class GeminiAdapter:
                 }
 
             case ContentPartKind.AUDIO:
-                if part.audio and part.audio.data:
+                if not part.audio:
+                    raise InvalidRequestError(
+                        "AUDIO content part has no audio payload", provider="gemini"
+                    )
+                if part.audio.data:
                     import base64
 
                     return {
@@ -256,17 +260,23 @@ class GeminiAdapter:
                             "data": base64.b64encode(part.audio.data).decode(),
                         }
                     }
-                elif part.audio and part.audio.url:
+                elif part.audio.url:
                     return {
                         "fileData": {
                             "mimeType": part.audio.media_type or "audio/wav",
                             "fileUri": part.audio.url,
                         }
                     }
-                return None
+                raise InvalidRequestError(
+                    "AUDIO content part has no data and no url", provider="gemini"
+                )
 
             case ContentPartKind.DOCUMENT:
-                if part.document and part.document.data:
+                if not part.document:
+                    raise InvalidRequestError(
+                        "DOCUMENT content part has no document payload", provider="gemini"
+                    )
+                if part.document.data:
                     import base64
 
                     return {
@@ -275,14 +285,16 @@ class GeminiAdapter:
                             "data": base64.b64encode(part.document.data).decode(),
                         }
                     }
-                elif part.document and part.document.url:
+                elif part.document.url:
                     return {
                         "fileData": {
                             "mimeType": part.document.media_type or "application/pdf",
                             "fileUri": part.document.url,
                         }
                     }
-                return None
+                raise InvalidRequestError(
+                    "DOCUMENT content part has no data and no url", provider="gemini"
+                )
 
             case ContentPartKind.THINKING:
                 return {"thought": True, "text": part.text or ""}
