@@ -277,13 +277,13 @@ class AnthropicAdapter:
                         },
                     }
                 if part.document.url:
-                    # §8.3.3: Anthropic supports document URLs natively
+                    # §8.3.3: Anthropic supports document URLs natively.
+                    # URLPDFSource only accepts "type" and "url" -- no media_type.
                     return {
                         "type": "document",
                         "source": {
                             "type": "url",
                             "url": part.document.url,
-                            "media_type": part.document.media_type or "application/pdf",
                         },
                     }
                 raise InvalidRequestError(

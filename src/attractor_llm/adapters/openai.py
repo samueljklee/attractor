@@ -195,6 +195,17 @@ class OpenAIAdapter:
         if "items" in schema and isinstance(schema["items"], dict):
             OpenAIAdapter._ensure_additional_properties_false(schema["items"])
 
+        # Recurse into composite keywords (anyOf/oneOf/allOf)
+        for keyword in ("anyOf", "oneOf", "allOf"):
+            for variant in schema.get(keyword) or []:
+                if isinstance(variant, dict):
+                    OpenAIAdapter._ensure_additional_properties_false(variant)
+
+        # Recurse into $defs/definitions
+        for defn in (schema.get("$defs") or schema.get("definitions") or {}).values():
+            if isinstance(defn, dict):
+                OpenAIAdapter._ensure_additional_properties_false(defn)
+
     def _translate_input_items(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Translate unified messages to Responses API input items.
 

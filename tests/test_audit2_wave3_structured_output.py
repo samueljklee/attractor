@@ -27,7 +27,6 @@ from attractor_llm.types import (
     Usage,
 )
 
-
 # ================================================================== #
 # Helpers
 # ================================================================== #
@@ -76,7 +75,7 @@ class TestGenerateObjectResponseFormat:
 
     @pytest.mark.asyncio
     async def test_generate_object_sets_response_format_for_openai(self) -> None:
-        """OpenAI provider: request.response_format must be json_schema with nested json_schema obj."""
+        """OpenAI provider: response_format must be json_schema with nested json_schema key."""
         from attractor_llm.generate import generate_object
 
         mock_resp = _make_json_response({"name": "Alice"}, provider="openai")
@@ -347,7 +346,7 @@ class TestAdapterNativePaths:
         assert fmt["type"] == "json_schema"
 
     def test_gemini_adapter_response_format_path(self) -> None:
-        """Gemini adapter translates json_schema response_format to responseMimeType+responseSchema."""
+        """Gemini adapter: json_schema response_format becomes responseMimeType+responseSchema."""
         from attractor_llm.adapters.base import ProviderConfig
         from attractor_llm.adapters.gemini import GeminiAdapter
 
@@ -567,18 +566,22 @@ class TestAnthropicDocumentURL:
         assert result["source"]["type"] == "url"
         assert result["source"]["url"] == "https://example.com/doc.pdf"
 
-    def test_anthropic_document_url_has_default_media_type(self) -> None:
-        """URL document without explicit media_type defaults to application/pdf."""
+    def test_anthropic_document_url_has_no_media_type(self) -> None:
+        """URL document source must NOT include media_type -- URLPDFSource only accepts type+url."""
         part = ContentPart(
             kind=ContentPartKind.DOCUMENT,
             document=DocumentData(url="https://example.com/report.pdf"),
         )
         result = self._translate_document_part(part)
 
-        assert result["source"]["media_type"] == "application/pdf"
+        assert "media_type" not in result["source"], (
+            "Anthropic URLPDFSource does not accept media_type; it must be omitted"
+        )
 
-    def test_anthropic_document_url_has_media_type(self) -> None:
-        """Explicit media_type is passed through to the source block."""
+    def test_anthropic_document_url_explicit_media_type_still_no_media_type_in_source(
+        self,
+    ) -> None:
+        """Even with explicit media_type set, URL source must NOT include it (API rejects it)."""
         part = ContentPart(
             kind=ContentPartKind.DOCUMENT,
             document=DocumentData(
@@ -588,7 +591,9 @@ class TestAnthropicDocumentURL:
         )
         result = self._translate_document_part(part)
 
-        assert result["source"]["media_type"] == "text/html"
+        assert "media_type" not in result["source"], (
+            "Anthropic URLPDFSource does not accept media_type; it must be omitted"
+        )
         assert result["source"]["url"] == "https://example.com/page.html"
 
     def test_anthropic_document_base64_still_works(self) -> None:
@@ -634,3 +639,267 @@ class TestAnthropicDocumentURL:
 
         assert doc_part["source"]["type"] == "url"
         assert doc_part["source"]["url"] == "https://example.com/annual-report.pdf"
+        # Confirm media_type absent from the URL source
+        assert "media_type" not in doc_part["source"]
+
+
+# ================================================================== #
+# Fix 1: _ensure_additional_properties_false anyOf/oneOf/allOf/$defs
+# ================================================================== #
+
+
+class TestEnsureAdditionalPropertiesFalseComposite:
+    """_ensure_additional_properties_false recurses into anyOf/oneOf/allOf/$defs."""
+
+    def _ensure(self, schema: dict) -> dict:
+        import copy
+
+        from attractor_llm.adapters.openai import OpenAIAdapter
+
+        schema = copy.deepcopy(schema)
+        OpenAIAdapter._ensure_additional_properties_false(schema)
+        return schema
+
+    def test_anyof_variants_get_additional_properties_false(self) -> None:
+        """anyOf object variants must have additionalProperties: false applied."""
+        schema = {
+            "anyOf": [
+                {"type": "object", "properties": {"a": {"type": "string"}}},
+                {"type": "object", "properties": {"b": {"type": "integer"}}},
+            ]
+        }
+        result = self._ensure(schema)
+        for variant in result["anyOf"]:
+            assert variant.get("additionalProperties") is False, (
+                f"anyOf variant missing additionalProperties:false: {variant}"
+            )
+
+    def test_oneof_variants_get_additional_properties_false(self) -> None:
+        """oneOf object variants must have additionalProperties: false applied."""
+        schema = {
+            "oneOf": [
+                {"type": "object", "properties": {"x": {"type": "string"}}},
+            ]
+        }
+        result = self._ensure(schema)
+        assert result["oneOf"][0].get("additionalProperties") is False
+
+    def test_allof_variants_get_additional_properties_false(self) -> None:
+        """allOf object variants must have additionalProperties: false applied."""
+        schema = {
+            "allOf": [
+                {"type": "object", "properties": {"y": {"type": "number"}}},
+            ]
+        }
+        result = self._ensure(schema)
+        assert result["allOf"][0].get("additionalProperties") is False
+
+    def test_defs_get_additional_properties_false(self) -> None:
+        """$defs object definitions must have additionalProperties: false applied."""
+        schema = {
+            "type": "object",
+            "properties": {"item": {"$ref": "#/$defs/Item"}},
+            "$defs": {"Item": {"type": "object", "properties": {"name": {"type": "string"}}}},
+        }
+        result = self._ensure(schema)
+        assert result["$defs"]["Item"].get("additionalProperties") is False
+
+    def test_definitions_get_additional_properties_false(self) -> None:
+        """Legacy 'definitions' key is also recursed into."""
+        schema = {
+            "type": "object",
+            "definitions": {"Addr": {"type": "object", "properties": {"city": {"type": "string"}}}},
+        }
+        result = self._ensure(schema)
+        assert result["definitions"]["Addr"].get("additionalProperties") is False
+
+    def test_nested_anyof_inside_property(self) -> None:
+        """anyOf nested inside a property value is also recursed into."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "anyOf": [
+                        {"type": "object", "properties": {"n": {"type": "integer"}}},
+                        {"type": "string"},
+                    ]
+                }
+            },
+        }
+        result = self._ensure(schema)
+        assert result["additionalProperties"] is False
+        obj_variant = result["properties"]["value"]["anyOf"][0]
+        assert obj_variant.get("additionalProperties") is False
+
+    def test_non_object_anyof_variant_not_modified(self) -> None:
+        """Non-object anyOf variants (e.g. type=string) are left unchanged."""
+        schema = {
+            "anyOf": [
+                {"type": "string"},
+                {"type": "null"},
+            ]
+        }
+        result = self._ensure(schema)
+        # String and null types should not get additionalProperties
+        for variant in result["anyOf"]:
+            assert "additionalProperties" not in variant
+
+
+# ================================================================== #
+# Fix 3: Type validation wired into generate.py _validate_tool_args
+# ================================================================== #
+
+
+class TestGenerateValidateToolArgs:
+    """_validate_tool_args in generate.py checks required fields AND types."""
+
+    def _make_tool(self, schema: dict) -> Any:
+        from attractor_llm.types import Tool
+
+        async def _exec(**kwargs: Any) -> str:
+            return "ok"
+
+        return Tool(name="my_tool", description="test tool", parameters=schema, execute=_exec)
+
+    def _validate(self, schema: dict, args: dict) -> str | None:
+        from attractor_llm.generate import _validate_tool_args
+
+        return _validate_tool_args(self._make_tool(schema), args)
+
+    # -- required field checks (pre-existing behaviour) --
+
+    def test_missing_required_field_returns_error(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+        error = self._validate(schema, {})
+        assert error is not None
+        assert "name" in error
+
+    def test_all_required_present_passes(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+        assert self._validate(schema, {"name": "Alice"}) is None
+
+    # -- type checking (new behaviour) --
+
+    def test_string_field_gets_int_returns_error(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+        error = self._validate(schema, {"name": 42})
+        assert error is not None
+        assert "name" in error
+        assert "string" in error or "int" in error
+
+    def test_integer_field_gets_string_returns_error(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        }
+        error = self._validate(schema, {"count": "five"})
+        assert error is not None
+        assert "count" in error
+
+    def test_bool_not_accepted_for_integer(self) -> None:
+        """bool is a subclass of int in Python -- must be explicitly rejected."""
+        schema = {
+            "type": "object",
+            "properties": {"n": {"type": "integer"}},
+            "required": ["n"],
+        }
+        error = self._validate(schema, {"n": True})
+        assert error is not None
+        assert "boolean" in error or "bool" in error
+
+    def test_bool_not_accepted_for_number(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"score": {"type": "number"}},
+            "required": ["score"],
+        }
+        error = self._validate(schema, {"score": False})
+        assert error is not None
+
+    def test_correct_int_passes(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        }
+        assert self._validate(schema, {"count": 5}) is None
+
+    def test_number_accepts_float(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"score": {"type": "number"}},
+            "required": ["score"],
+        }
+        assert self._validate(schema, {"score": 3.14}) is None
+
+    def test_number_accepts_int(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"score": {"type": "number"}},
+            "required": ["score"],
+        }
+        assert self._validate(schema, {"score": 42}) is None
+
+    def test_boolean_field_gets_string_returns_error(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"flag": {"type": "boolean"}},
+            "required": ["flag"],
+        }
+        error = self._validate(schema, {"flag": "yes"})
+        assert error is not None
+        assert "flag" in error
+
+    def test_array_field_gets_dict_returns_error(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"items": {"type": "array"}},
+            "required": ["items"],
+        }
+        error = self._validate(schema, {"items": {"key": "val"}})
+        assert error is not None
+
+    def test_extra_keys_are_tolerated(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+        assert self._validate(schema, {"name": "Alice", "extra": 99}) is None
+
+    def test_no_schema_passes(self) -> None:
+        from attractor_llm.generate import _validate_tool_args
+        from attractor_llm.types import Tool
+
+        # Use model_construct to bypass Pydantic validation so we can pass parameters=None
+        # (the validator normally requires a dict; this tests the guard inside _validate_tool_args)
+        tool = Tool.model_construct(name="t", description="d", parameters=None)
+        assert _validate_tool_args(tool, {"a": 1}) is None
+
+    def test_missing_required_and_wrong_type_reports_missing_first(self) -> None:
+        """When a required field is missing, report that before type errors."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "count": {"type": "integer"},
+            },
+            "required": ["name", "count"],
+        }
+        # 'name' missing entirely; 'count' has wrong type
+        error = self._validate(schema, {"count": "bad"})
+        assert error is not None
+        assert "name" in error  # missing field reported first
