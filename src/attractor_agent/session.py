@@ -206,7 +206,9 @@ class Session:
         # Tracked subagent tasks for safe cleanup (Spec Appendix B)
         self._subagent_tasks: set[asyncio.Task[object]] = set()
 
-        # Tracked active tasks (LLM stream tasks etc.) for shutdown step 1
+        # TODO: Populated when streaming LLM tasks are created (§9.11 Step 1).
+        # Currently scaffolding -- no production code populates this set yet.
+        # The cleanup mechanism works but is inert until client.stream() is wired.
         self._active_tasks: set[asyncio.Task[object]] = set()
 
         # Loop detection
@@ -335,13 +337,15 @@ class Session:
         except (AuthenticationError, AccessDeniedError) as exc:
             # Spec §9.11: auth errors (401/403) surface immediately → CLOSED.
             # The session must not accept new inputs after an auth failure.
+            # Flag must be set BEFORE emit so the finally block sees it even
+            # if emit() itself raises.
+            _auth_error = True
             await self._emitter.emit(
                 SessionEvent(
                     kind=EventKind.ERROR,
                     data={"error": str(exc), "turn": self._turn_count, "auth_error": True},
                 )
             )
-            _auth_error = True
             result = f"[Authentication Error: {exc}]"
         except Exception as exc:
             await self._emitter.emit(
@@ -358,6 +362,7 @@ class Session:
                 await self._cleanup_on_abort()
                 self._state = SessionState.CLOSED
             elif _auth_error:
+                await self._cleanup_on_abort()
                 self._state = SessionState.CLOSED
             else:
                 self._state = SessionState.IDLE
@@ -635,7 +640,7 @@ class Session:
         """Best-effort resource cleanup on abort. Spec Appendix B.
 
         Implements the 8-step shutdown sequence:
-          Step 1 (done): Cancel tracked asyncio tasks (LLM stream / active tasks).
+          Step 1 (scaffolding): Cancel tracked asyncio tasks (LLM stream / active tasks).
           Step 2 (TODO): Send SIGTERM to running shell processes.
           Step 3 (TODO): Wait up to 2 seconds for processes to exit.
           Step 4 (TODO): Send SIGKILL to remaining processes.
