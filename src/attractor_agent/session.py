@@ -10,6 +10,7 @@ Spec reference: coding-agent-loop §2.1-2.10.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -153,6 +154,11 @@ class Session:
         profile: ProviderProfile | None = None,
         environment: ExecutionEnvironment | None = None,
     ) -> None:
+        """Initialise a Session.
+
+        Note: environment= sets a process-wide singleton. Concurrent sessions
+        with different environments will interfere with each other.
+        """
         self._client = client
         self._config = config or SessionConfig()
         self._abort = abort_signal or AbortSignal()
@@ -165,7 +171,7 @@ class Session:
         # profile.apply_to_config() fills missing config fields (system_prompt, model…)
         # then profile.get_tools() filters/augments the base tool list. Spec §9.1.
         if profile is not None:
-            self._config = profile.apply_to_config(self._config)
+            self._config = profile.apply_to_config(dataclasses.replace(self._config))
             # Merge profile-provided tools with any explicitly passed tools list.
             base_tools: list[Tool] = list(tools) if tools else []
             tools = profile.get_tools(base_tools)
@@ -416,7 +422,22 @@ class Session:
             if tool_calls:
                 tool_round += 1
 
-                # Loop detection BEFORE execution (avoid wasted work).
+                # Execute all tool calls
+                results = await self._tool_registry.execute_tool_calls(tool_calls)
+
+                # Add tool results to history
+                for result in results:
+                    self._history.append(
+                        Message(
+                            role=Role.TOOL,
+                            content=[result],
+                        )
+                    )
+
+                # Drain steering queue
+                await self._drain_steering()
+
+                # Loop detection AFTER execution, per spec §2.5 step 8.
                 # Spec §2.10: inject a SteeringTurn warning and CONTINUE the
                 # loop -- do not exit -- so the model can self-correct.
                 for tc in tool_calls:
@@ -436,21 +457,6 @@ class Session:
                         # let the model see the steering message.
                         self._loop_detector.reset()
                         break
-
-                # Execute all tool calls
-                results = await self._tool_registry.execute_tool_calls(tool_calls)
-
-                # Add tool results to history
-                for result in results:
-                    self._history.append(
-                        Message(
-                            role=Role.TOOL,
-                            content=[result],
-                        )
-                    )
-
-                # Drain steering queue
-                await self._drain_steering()
 
                 # Continue the loop for another LLM call
                 continue
