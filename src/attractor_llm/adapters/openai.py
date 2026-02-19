@@ -15,6 +15,7 @@ Key OpenAI-specific behaviors:
 
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -151,11 +152,24 @@ class OpenAIAdapter:
             body["reasoning"] = {"effort": request.reasoning_effort}
 
         # Response format (Responses API uses text.format, not response_format)
-        # P6: Native structured output -- json_schema type requires a 'name' field
+        # P6: Native structured output -- json_schema type requires flattening
+        # the nested json_schema object into the top-level format dict, and
+        # adding additionalProperties:false for strict mode.
         if request.response_format:
             fmt = dict(request.response_format)
-            if fmt.get("type") == "json_schema" and "name" not in fmt:
-                fmt["name"] = "response"
+            if fmt.get("type") == "json_schema":
+                # Flatten nested json_schema key (Chat Completions style → Responses API style)
+                if "json_schema" in fmt:
+                    nested = fmt.pop("json_schema")
+                    fmt.update(nested)
+                # Ensure name exists
+                if "name" not in fmt:
+                    fmt["name"] = "response"
+                # Strict mode requires additionalProperties: false on object schemas
+                # Deep-copy to avoid mutating the caller's schema dict
+                if fmt.get("strict") and "schema" in fmt:
+                    fmt["schema"] = copy.deepcopy(fmt["schema"])
+                    self._ensure_additional_properties_false(fmt["schema"])
             body["text"] = {"format": fmt}
 
         # Provider-specific options
@@ -165,6 +179,21 @@ class OpenAIAdapter:
                 body[key] = value
 
         return body
+
+    @staticmethod
+    def _ensure_additional_properties_false(schema: dict[str, Any]) -> None:
+        """Recursively add additionalProperties: false to all object schemas.
+
+        OpenAI strict mode requires this on every object-type node.
+        Mutates the schema dict in place.
+        """
+        if schema.get("type") == "object":
+            schema.setdefault("additionalProperties", False)
+            for prop in (schema.get("properties") or {}).values():
+                if isinstance(prop, dict):
+                    OpenAIAdapter._ensure_additional_properties_false(prop)
+        if "items" in schema and isinstance(schema["items"], dict):
+            OpenAIAdapter._ensure_additional_properties_false(schema["items"])
 
     def _translate_input_items(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Translate unified messages to Responses API input items.

@@ -481,7 +481,9 @@ async def generate_object(
     """Generate structured JSON output.
 
     Instructs the model to respond with JSON matching the given schema.
-    Parses and returns the JSON object.
+    For OpenAI and Gemini, uses native response_format for structured output
+    (§8.4.7).  For Anthropic and unknown providers, falls back to prompt
+    injection.
 
     Args:
         client: The LLM client.
@@ -498,22 +500,42 @@ async def generate_object(
     Raises:
         NoObjectGeneratedError: If the response is not valid JSON.
     """
+    # §8.4.7: Use native response_format for providers that support it.
+    # Anthropic has no native structured-output mode; unknown providers also
+    # fall back to prompt injection.
+    response_format: dict[str, Any] | None = None
     schema_instruction = ""
-    if schema:
-        schema_instruction = (
-            f"\n\nRespond with a JSON object matching this schema:\n"
-            f"```json\n{json.dumps(schema, indent=2)}\n```\n"
-            f"Output ONLY the JSON object, no other text."
-        )
 
-    full_system = (system or "") + schema_instruction
+    if schema:
+        if provider == "openai":
+            # OpenAI Responses API: json_schema with nested json_schema object
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": schema, "strict": True},
+            }
+        elif provider == "gemini":
+            # Gemini: responseMimeType + responseSchema via generationConfig
+            response_format = {
+                "type": "json_schema",
+                "schema": schema,
+            }
+        else:
+            # Anthropic and unknown providers: prompt injection fallback
+            schema_instruction = (
+                f"\n\nRespond with a JSON object matching this schema:\n"
+                f"```json\n{json.dumps(schema, indent=2)}\n```\n"
+                f"Output ONLY the JSON object, no other text."
+            )
+
+    full_system = ((system or "") + schema_instruction).strip() or None
 
     request = Request(
         model=model,
         provider=provider,
         messages=[Message.user(prompt)],
-        system=full_system.strip() or None,
+        system=full_system,
         temperature=temperature,
+        response_format=response_format,
     )
 
     response = await client.complete(request)

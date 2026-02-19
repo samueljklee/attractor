@@ -163,10 +163,12 @@ class TestAnthropicDocument:
         result = self.adapter._translate_content_part(part, Role.USER)
         assert result["source"]["media_type"] == "application/pdf"
 
-    def test_document_url_raises_invalid_request_error(self) -> None:
-        """URL-only documents are not supported by Anthropic -- must raise."""
-        with pytest.raises(InvalidRequestError, match="base64"):
-            self.adapter._translate_content_part(DOCUMENT_PART_URL, Role.USER)
+    def test_document_url_translates_to_url_source(self) -> None:
+        """URL-only documents are now supported by Anthropic via source.type=url (s8.3.3)."""
+        result = self.adapter._translate_content_part(DOCUMENT_PART_URL, Role.USER)
+        assert result["type"] == "document"
+        assert result["source"]["type"] == "url"
+        assert result["source"]["url"] == DOCUMENT_DATA_URL.url
 
 
 class TestAnthropicAudio:
