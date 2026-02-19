@@ -275,8 +275,8 @@ class TestSessionEdgeCases:
         assert loop_output == "I will try a different approach."
         assert "Loop detected" not in loop_output
 
-        # LOOP_DETECTED event must still be fired.
-        assert EventKind.LOOP_DETECTED in events
+        # LOOP_DETECTION event must still be fired.
+        assert EventKind.LOOP_DETECTION in events
 
         # A SteeringTurn with a loop warning must appear in history.
         from attractor_agent.session import SteeringTurn
@@ -321,7 +321,7 @@ class TestSessionEdgeCases:
 
         result = await session.submit("Keep going")
         assert "Tool round limit" in result
-        assert EventKind.LIMIT_REACHED in events
+        assert EventKind.TURN_LIMIT in events
         assert adapter.call_count <= 6  # 5 tool rounds + 1
 
     @pytest.mark.asyncio
@@ -350,7 +350,7 @@ class TestSessionEdgeCases:
         session.steer("Focus on error handling")
         await session.submit("Write code")
 
-        assert EventKind.STEER_INJECTED in events
+        assert EventKind.STEERING_INJECTED in events
         # The second LLM call should see the steering message
         second_req = adapter.requests[1]
         steering_msgs = [
@@ -389,7 +389,7 @@ class TestSessionEdgeCases:
         assert EventKind.TURN_START in events
         assert EventKind.TOOL_CALL_START in events
         assert EventKind.TOOL_CALL_END in events
-        assert EventKind.ASSISTANT_TEXT in events
+        assert EventKind.ASSISTANT_TEXT_END in events
         assert EventKind.TURN_END in events
         assert events[-1] == EventKind.SESSION_END
 
