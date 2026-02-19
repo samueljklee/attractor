@@ -39,7 +39,13 @@ class GeminiProfile:
         return True
 
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
-        """Enhance tool descriptions with examples for Gemini."""
+        """Enhance tool descriptions with examples for Gemini.
+
+        Also injects list_dir and read_many_files if not already present
+        (Spec §3.6: Gemini profile tool list).
+        """
+        from attractor_agent.tools.core import LIST_DIR, READ_MANY_FILES
+
         tools: list[Tool] = []
         for tool in base_tools:
             desc = _GEMINI_TOOL_DESCRIPTIONS.get(tool.name, tool.description)
@@ -51,6 +57,11 @@ class GeminiProfile:
                     execute=tool.execute,
                 )
             )
+        if base_tools:
+            if not any(t.name == "list_dir" for t in tools):
+                tools.append(LIST_DIR)
+            if not any(t.name == "read_many_files" for t in tools):
+                tools.append(READ_MANY_FILES)
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:

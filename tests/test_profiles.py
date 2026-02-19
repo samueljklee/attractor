@@ -132,7 +132,7 @@ class TestSystemPromptContent:
 
 class TestToolCustomization:
     def test_all_profiles_return_expected_tools(self):
-        for provider, expected_count in [("anthropic", 6), ("openai", 7), ("gemini", 6)]:
+        for provider, expected_count in [("anthropic", 6), ("openai", 7), ("gemini", 8)]:
             p = get_profile(provider)
             tools = p.get_tools(list(ALL_CORE_TOOLS))
             assert len(tools) == expected_count, (
