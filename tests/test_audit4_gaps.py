@@ -618,6 +618,34 @@ async def test_post_run_dispatches_pipeline_execution() -> None:
     assert _runs[run_id]["status"] in ("running", "completed", "failed")
 
 
+@pytest.mark.asyncio
+async def test_get_status_returns_valid_json_no_task_key() -> None:
+    """GET /status/{id} returns valid JSON without crashing (Task not serializable)."""
+    from starlette.testclient import TestClient
+
+    from attractor_pipeline.server.app import _runs, app
+
+    _runs.clear()
+
+    with TestClient(app) as client:
+        # Create a run first
+        post_resp = client.post("/run", json={"pipeline": "test"})
+        assert post_resp.status_code == 202
+        run_id = post_resp.json()["id"]
+
+        # GET /status/{id} must not crash even though the run record has a Task
+        get_resp = client.get(f"/status/{run_id}")
+
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    # Must be valid JSON (no TypeError from asyncio.Task)
+    assert isinstance(data, dict)
+    assert data["id"] == run_id
+    assert "status" in data
+    # The asyncio.Task must be excluded from the response
+    assert "task" not in data
+
+
 # ------------------------------------------------------------------ #
 # Item 12 §9.1.7 -- Loop detector catches A→B→A→B alternating cycles
 # ------------------------------------------------------------------ #
@@ -666,6 +694,37 @@ def test_loop_detector_catches_abc_cycle() -> None:
     assert any(results), "A→B→C cycle should be detected"
 
 
+def test_loop_detector_threshold4_catches_3cycle_divisibility_blind_spot() -> None:
+    """_LoopDetector with threshold=4 detects a 3-cycle (tail=8, cycle_len=3: 8%3≠0).
+
+    This is the divisibility blind spot: the old code required len(tail) % cycle_len == 0,
+    which skipped cycle_len=3 when tail=8 (8%3=2≠0).  The fix checks at least 2 full
+    repeats within the tail instead of requiring perfect tiling.
+    """
+    from attractor_agent.session import _LoopDetector
+
+    # threshold=4 → tail = threshold*2 = 8 entries examined
+    det = _LoopDetector(window=6, threshold=4)
+
+    # A→B→C pattern repeated enough times to fill the sliding window
+    calls = [
+        ("tool_a", "{}"),
+        ("tool_b", "{}"),
+        ("tool_c", "{}"),
+        ("tool_a", "{}"),
+        ("tool_b", "{}"),
+        ("tool_c", "{}"),
+        ("tool_a", "{}"),
+        ("tool_b", "{}"),
+        ("tool_c", "{}"),
+    ]
+
+    results = [det.record(name, args) for name, args in calls]
+    assert any(results), (
+        "threshold=4 should detect a 3-cycle (divisibility blind spot fix)"
+    )
+
+
 def test_loop_detector_still_catches_simple_repetition() -> None:
     """_LoopDetector still detects the simple single-tool repetition."""
     from attractor_agent.session import _LoopDetector
@@ -710,21 +769,19 @@ def test_loop_detector_reset_clears_history() -> None:
 
 
 def test_reasoning_tokens_field_has_docstring() -> None:
-    """Usage.reasoning_tokens has a docstring describing the approximation."""
-    import inspect
-
+    """Usage.reasoning_tokens has a Field description describing the approximation."""
     from attractor_llm.types import Usage
 
-    # Inspect the source file to verify the docstring/comment is present
-    src_file = inspect.getfile(Usage)
-    with open(src_file) as f:
-        source = f.read()
-
-    # The docstring comment should be near the field definition
-    assert "reasoning_tokens" in source
-    assert "Anthropic" in source or "anthropic" in source
-    # The approximation note should be present
-    assert "len(thinking_text)" in source or "// 4" in source or "estimate" in source.lower()
+    # Verify the Pydantic Field description is present and non-empty
+    field_info = Usage.model_fields["reasoning_tokens"]
+    desc = field_info.description or ""
+    assert desc, "reasoning_tokens Field must have a non-empty description"
+    assert "Anthropic" in desc or "anthropic" in desc, (
+        f"Description should mention Anthropic: {desc!r}"
+    )
+    assert "len(thinking_text)" in desc or "// 4" in desc or "estimate" in desc.lower(), (
+        f"Description should mention the approximation method: {desc!r}"
+    )
 
 
 def test_reasoning_tokens_default_is_zero() -> None:

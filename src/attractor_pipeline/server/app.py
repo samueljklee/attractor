@@ -111,7 +111,8 @@ async def _handle_get_status(request: Request) -> JSONResponse:
     run = _runs.get(run_id)
     if run is None:
         return JSONResponse({"error": f"Run '{run_id}' not found"}, status_code=404)
-    return JSONResponse(run)
+    # Exclude the asyncio.Task object -- it is not JSON-serializable.
+    return JSONResponse({k: v for k, v in run.items() if k != "task"})
 
 
 async def _handle_submit_answer(request: Request) -> JSONResponse:

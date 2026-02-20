@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 import os
 import signal as _signal
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -131,8 +132,6 @@ class _LoopDetector:
             self._recent = self._recent[-max_window:]
 
         # --- Check 1: single-signature repetition (original) ---
-        from collections import Counter
-
         window_slice = self._recent[-self.window :]
         counts = Counter(window_slice)
         if any(count >= self.threshold for count in counts.values()):
@@ -150,13 +149,14 @@ class _LoopDetector:
             return False  # not enough history yet
 
         for cycle_len in range(2, self.threshold + 1):
-            if len(tail) % cycle_len != 0:
-                continue  # tail length must be evenly divisible by cycle_len
-            pattern = tail[:cycle_len]
-            # Verify the entire tail is this pattern tiled end-to-end
-            all_match = all(tail[i] == pattern[i % cycle_len] for i in range(len(tail)))
             full_repeats = len(tail) // cycle_len
-            if all_match and full_repeats >= 2:
+            if full_repeats < 2:
+                continue  # need at least 2 full repeats to confirm a cycle
+            check_len = cycle_len * full_repeats
+            pattern = tail[:cycle_len]
+            # Verify as many complete repeats as fit in the tail
+            all_match = all(tail[i] == pattern[i % cycle_len] for i in range(check_len))
+            if all_match:
                 return True
 
         return False

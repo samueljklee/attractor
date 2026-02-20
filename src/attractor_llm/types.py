@@ -320,13 +320,16 @@ class Usage(BaseModel):
 
     input_tokens: int = 0
     output_tokens: int = 0
-    reasoning_tokens: int = 0
-    """Approximate reasoning/thinking tokens. For Anthropic, estimated as
-    len(thinking_text) // 4 since the API does not expose a native count.
-    For OpenAI, sourced from output_tokens_details.reasoning_tokens (native).
-    For Gemini, sourced from usageMetadata.thoughtsTokenCount when available.
-    Reasoning tokens are a subset of output_tokens (billed as output but not
-    visible in the response text).  Spec §8.9.29."""
+    reasoning_tokens: int = Field(
+        default=0,
+        description=(
+            "Approximate reasoning/thinking tokens. For Anthropic, estimated as "
+            "len(thinking_text) // 4 since the API does not expose a native count. "
+            "For OpenAI, sourced from output_tokens_details.reasoning_tokens. "
+            "For Gemini, sourced from usageMetadata.thoughtsTokenCount. "
+            "Reasoning tokens are a subset of output_tokens."
+        ),
+    )
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
 
