@@ -314,6 +314,10 @@ async def stream(
 
     Returns:
         StreamResult wrapping the live event stream.
+
+    Note:
+        timeout applies to stream connection setup, not full stream consumption.
+        For full-stream timeouts, use abort_signal with an external timer.
     """
     from attractor_llm.streaming import StreamResult
 
@@ -332,7 +336,7 @@ async def stream(
         temperature=temperature,
     )
 
-    timeout_s = (tc.total or tc.per_step) if tc else None
+    timeout_s = (tc.total if tc.total is not None else tc.per_step) if tc else None
     if timeout_s is not None:
         event_stream = await asyncio.wait_for(
             client.stream(request, abort_signal=abort_signal), timeout=timeout_s
@@ -389,6 +393,10 @@ async def stream_with_tools(
 
     Returns:
         StreamResult wrapping a multi-turn streaming loop.
+
+    Note:
+        timeout applies to stream connection setup per round, not full stream
+        consumption. For full-stream timeouts, use abort_signal with an external timer.
     """
     # Normalise timeout. Spec §8.4.10.
     tc: TimeoutConfig | None = None
