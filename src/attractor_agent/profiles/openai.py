@@ -43,7 +43,10 @@ class OpenAIProfile:
 
         Also injects apply_patch if not already present -- OpenAI models
         prefer the v4a unified-diff format for code changes (§9.2).
+        Also injects subagent tools (spawn_agent, send_input, wait,
+        close_agent) for interactive multi-agent workflows (§9.12.34-36).
         """
+        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
         from attractor_agent.tools.core import APPLY_PATCH
 
         tools: list[Tool] = []
@@ -60,6 +63,13 @@ class OpenAIProfile:
             )
         if base_tools and not has_apply_patch:
             tools.append(APPLY_PATCH)
+        # Inject subagent tools if not already present (§9.12.34-36)
+        if base_tools:
+            existing_names = {t.name for t in tools}
+            subagent_tools = create_interactive_tools(SubagentManager())
+            for t in subagent_tools:
+                if t.name not in existing_names:
+                    tools.append(t)
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:
@@ -92,23 +102,29 @@ make edits, and report results without excessive explanation.
 
 RULES
 - Always inspect files before editing. Use read_file to get exact context.
-- Prefer edit_file for small, localized changes. Use write_file only \
-for new files or full rewrites.
+- Prefer apply_patch as the primary editing tool for code changes. \
+apply_patch uses the v4a unified-diff format and handles multi-hunk edits \
+atomically. Use edit_file only for single-string replacements when \
+apply_patch is unavailable. Use write_file only for new files or full rewrites.
 - Use shell only for running tests, builds, or inspection commands.
 - Use grep and glob to locate code before reading large files.
 - After tool use, summarize what changed and what remains.
 
 WORKFLOW PATTERN
-discover (glob/grep) -> inspect (read_file) -> modify (edit_file) -> \
+discover (glob/grep) -> inspect (read_file) -> modify (apply_patch) -> \
 verify (shell)
 
 EDITING
+- apply_patch applies unified diffs: include 3 lines of context around \
+each change. Multiple hunks in one call are atomic.
 - edit_file requires old_string to match exactly and be unique in the file.
 - Always read_file first to see the exact content before editing.
-- For multiple changes to one file, make separate edit_file calls.
+- For multiple changes to one file, prefer a single apply_patch call \
+over multiple edit_file calls.
 
 ERROR HANDLING
-- If edit_file fails, re-read the file and retry with correct content.
+- If apply_patch or edit_file fails, re-read the file and retry with \
+correct content.
 - If a command fails, read the error output and fix the root cause.
 - Do not retry identical failing tool calls.
 

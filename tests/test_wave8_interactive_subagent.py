@@ -274,12 +274,13 @@ class TestCloseAgent:
 class TestInteractiveTools:
     """create_interactive_tools produces correct Tool objects."""
 
-    def test_creates_three_tools(self):
+    def test_creates_four_tools(self):
+        # spawn_agent was added in Audit 2 Wave 4 (§9.12.34-36)
         manager = SubagentManager()
         tools = create_interactive_tools(manager)
-        assert len(tools) == 3
+        assert len(tools) == 4
         names = {t.name for t in tools}
-        assert names == {"send_input", "wait", "close_agent"}
+        assert names == {"spawn_agent", "send_input", "wait", "close_agent"}
 
     def test_tools_have_execute_handlers(self):
         manager = SubagentManager()

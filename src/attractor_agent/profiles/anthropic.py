@@ -39,7 +39,13 @@ class AnthropicProfile:
         return True
 
     def get_tools(self, base_tools: list[Tool]) -> list[Tool]:
-        """Enhance tool descriptions for Claude's conventions."""
+        """Enhance tool descriptions for Claude's conventions.
+
+        Also injects subagent tools (spawn_agent, send_input, wait,
+        close_agent) for interactive multi-agent workflows (§9.12.34-36).
+        """
+        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
+
         tools: list[Tool] = []
         for tool in base_tools:
             desc = _ANTHROPIC_TOOL_DESCRIPTIONS.get(tool.name, tool.description)
@@ -51,6 +57,13 @@ class AnthropicProfile:
                     execute=tool.execute,
                 )
             )
+        # Inject subagent tools if not already present (§9.12.34-36)
+        if base_tools:
+            existing_names = {t.name for t in tools}
+            subagent_tools = create_interactive_tools(SubagentManager())
+            for t in subagent_tools:
+                if t.name not in existing_names:
+                    tools.append(t)
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:

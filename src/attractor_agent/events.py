@@ -8,7 +8,8 @@ Spec reference: coding-agent-loop §2.9.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -66,10 +67,15 @@ class EventEmitter:
     Supports both sync and async handlers. Handlers are called
     in registration order. Exceptions in handlers are caught and
     logged (they don't break the session loop).
+
+    Also supports an async iterator interface via the ``events()`` method,
+    backed by an ``asyncio.Queue``. Call ``close()`` to signal termination
+    and unblock any pending ``async for`` loops.
     """
 
     def __init__(self) -> None:
         self._handlers: list[EventHandler] = []
+        self._queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
 
     def on(self, handler: EventHandler) -> None:
         """Register an event handler."""
@@ -80,7 +86,10 @@ class EventEmitter:
         self._handlers = [h for h in self._handlers if h is not handler]
 
     async def emit(self, event: SessionEvent) -> None:
-        """Emit an event to all registered handlers."""
+        """Emit an event to all registered handlers and the async queue."""
+        # Put into the async-iterator queue first (non-blocking; queue is unbounded).
+        await self._queue.put(event)
+        # Then notify callback-style handlers.
         for handler in self._handlers:
             try:
                 result = handler(event)
@@ -90,3 +99,29 @@ class EventEmitter:
                 # Don't let handler errors break the session loop.
                 # In production, this should log the exception.
                 pass
+
+    async def close(self) -> None:
+        """Signal termination to any ``async for`` consumers.
+
+        Puts a sentinel ``None`` onto the queue so that the async generator
+        returned by ``events()`` exits cleanly. Safe to call multiple times.
+        """
+        await self._queue.put(None)
+
+    async def events(self) -> AsyncGenerator[SessionEvent, None]:
+        """Async generator that yields events as they are emitted.
+
+        Usage::
+
+            async for event in session.events.events():
+                print(event.kind)
+
+        The generator exits when ``close()`` is called (or when a ``None``
+        sentinel is received from the queue).
+        """
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                # Sentinel received -- stop iteration.
+                break
+            yield item

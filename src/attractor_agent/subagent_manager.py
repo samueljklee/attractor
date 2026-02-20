@@ -221,12 +221,39 @@ class SubagentManager:
 # ------------------------------------------------------------------ #
 
 
-def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
-    """Create the three interactive subagent Tool objects.
+def create_interactive_tools(manager: SubagentManager, client: Any = None) -> list[Tool]:
+    """Create the four interactive subagent Tool objects.
 
-    The returned tools close over *manager* so they can be registered
-    on any ToolRegistry or Session.
+    The returned tools close over *manager* (and optionally *client*) so
+    they can be registered on any ToolRegistry or Session.
+
+    Args:
+        manager: The SubagentManager instance to delegate operations to.
+        client: Optional LLM client used by spawn_agent to create subagents.
+                If None, spawn_agent returns an informative error message.
     """
+
+    async def _spawn_agent(
+        prompt: str,
+        model: str = "",
+        provider: str = "",
+        system_prompt: str = "",
+        max_turns: int = 20,
+    ) -> str:
+        if client is None:
+            return (
+                "Error: spawn_agent requires an LLM client. "
+                "Pass client= when calling create_interactive_tools(), "
+                "or use SubagentManager.spawn() directly."
+            )
+        return await manager.spawn(
+            client,
+            prompt,
+            model=model or None,
+            provider=provider or None,
+            system_prompt=system_prompt or None,
+            max_turns=max_turns,
+        )
 
     async def _send_input(agent_id: str, message: str) -> str:
         return manager.send_input(agent_id, message)
@@ -236,6 +263,43 @@ def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
 
     async def _close_agent(agent_id: str) -> str:
         return manager.close_agent(agent_id)
+
+    spawn_agent_tool = Tool(
+        name="spawn_agent",
+        description=(
+            "Spawn an interactive subagent as a background task. "
+            "Returns an agent_id used with send_input, wait, and "
+            "close_agent to communicate with the subagent. "
+            "The subagent runs autonomously on the given prompt."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The initial prompt / task for the subagent",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional model override (e.g. 'claude-sonnet-4-5')",
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "Optional provider override (e.g. 'anthropic', 'openai')",
+                },
+                "system_prompt": {
+                    "type": "string",
+                    "description": "Optional system prompt override for the subagent",
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Maximum turns the subagent may take (default 20)",
+                },
+            },
+            "required": ["prompt"],
+        },
+        execute=_spawn_agent,
+    )
 
     send_input_tool = Tool(
         name="send_input",
@@ -300,4 +364,4 @@ def create_interactive_tools(manager: SubagentManager) -> list[Tool]:
         execute=_close_agent,
     )
 
-    return [send_input_tool, wait_tool, close_agent_tool]
+    return [spawn_agent_tool, send_input_tool, wait_tool, close_agent_tool]

@@ -211,6 +211,12 @@ class Session:
         # The cleanup mechanism works but is inert until client.stream() is wired.
         self._active_tasks: set[asyncio.Task[object]] = set()
 
+        # Tracked OS-level processes for graceful shutdown (§9.1.6, §9.11.5).
+        # Populated by callers that spawn asyncio subprocesses and want them
+        # cleaned up on abort. Full integration requires env protocol changes
+        # (see _cleanup_on_abort Steps 2-4 comments).
+        self._tracked_processes: list[asyncio.subprocess.Process] = []
+
         # Loop detection
         self._loop_detector = _LoopDetector(
             window=self._config.loop_detection_window or 4,
@@ -489,6 +495,21 @@ class Session:
             text = response.text or ""
 
             if text:
+                # Emit TEXT_START to signal the assistant has begun responding (§9.10.1)
+                await self._emitter.emit(
+                    SessionEvent(
+                        kind=EventKind.ASSISTANT_TEXT_START,
+                        data={"turn": self._turn_count},
+                    )
+                )
+                # Emit TEXT_DELTA with the full text (single emission; not streaming) (§9.10.1)
+                await self._emitter.emit(
+                    SessionEvent(
+                        kind=EventKind.ASSISTANT_TEXT_DELTA,
+                        data={"delta": text},
+                    )
+                )
+                # Emit TEXT_END with the complete assembled text (§9.10.1)
                 await self._emitter.emit(
                     SessionEvent(
                         kind=EventKind.ASSISTANT_TEXT_END,
@@ -618,7 +639,16 @@ class Session:
         if project_docs:
             parts.append(project_docs)
 
-        # 4. User instruction overrides -- appended LAST (layer 5, §9.8)
+        # 4. Available tools -- list each tool's name and description (§9.8.3)
+        tool_defs = self._tool_registry.definitions()
+        if tool_defs:
+            tool_lines = ["<available_tools>"]
+            for tool in tool_defs:
+                tool_lines.append(f"- {tool.name}: {tool.description}")
+            tool_lines.append("</available_tools>")
+            parts.append("\n".join(tool_lines))
+
+        # 5. User instruction overrides -- appended LAST (layer 5, §9.8)
         if self._config.user_instructions:
             parts.append(self._config.user_instructions)
 
@@ -665,20 +695,39 @@ class Session:
             await asyncio.gather(*self._active_tasks, return_exceptions=True)
         self._active_tasks.clear()
 
-        # --- Step 2: SIGTERM running shell processes. ---
-        # TODO: Implement once ExecutionEnvironment exposes kill_all_processes().
-        # Proposed interface:
-        #   if hasattr(self._environment, "kill_all_processes"):
-        #       await self._environment.kill_all_processes(signal=signal.SIGTERM)
+        # --- Step 2: SIGTERM running tracked processes (§9.1.6, §9.11.5). ---
+        # _tracked_processes holds asyncio.subprocess.Process objects registered
+        # by callers.  Full automatic tracking requires env protocol changes
+        # (e.g. an env.kill_all_processes() method on LocalEnvironment).
+        import signal as _signal
+
+        _alive: list[asyncio.subprocess.Process] = []
+        for proc in self._tracked_processes:
+            if proc.returncode is None:  # still running
+                try:
+                    proc.send_signal(_signal.SIGTERM)
+                    _alive.append(proc)
+                except ProcessLookupError:
+                    pass  # already exited between check and signal
 
         # --- Step 3: Wait up to 2 seconds for processes to exit. ---
-        # TODO: Implement alongside step 2.
-        #   await asyncio.sleep(2)
+        if _alive:
+            _done, _pending = await asyncio.wait(
+                [asyncio.create_task(proc.wait()) for proc in _alive],
+                timeout=2.0,
+            )
+            # Cancel the wait tasks for any that didn't finish in time
+            for t in _pending:
+                t.cancel()
 
         # --- Step 4: SIGKILL remaining processes. ---
-        # TODO: Implement once ExecutionEnvironment exposes kill_all_processes().
-        #   if hasattr(self._environment, "kill_all_processes"):
-        #       await self._environment.kill_all_processes(signal=signal.SIGKILL)
+        for proc in self._tracked_processes:
+            if proc.returncode is None:  # still running after SIGTERM + wait
+                try:
+                    proc.send_signal(_signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # already exited
+        self._tracked_processes.clear()
 
         # --- Step 5: Drain and discard pending work queues. ---
         self._steer_queue.clear()
