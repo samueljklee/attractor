@@ -74,6 +74,29 @@ def get_retry_preset(name: str) -> RetryPolicy | None:
 _PIPELINE_RETRY = RETRY_PRESETS["none"]
 
 
+def _get_retry_policy(node: Node) -> RetryPolicy:
+    """Resolve the retry backoff policy for a node. Spec §11.5.3.
+
+    Resolution order:
+    1. Node-level ``retry_preset`` attribute (from DOT node attributes).
+       If the name is recognised in ``RETRY_PRESETS``, that policy is returned.
+    2. Unknown or absent preset name falls back to ``_PIPELINE_RETRY``
+       (the pipeline default, currently ``"none"``).
+
+    Args:
+        node: The pipeline node about to be (re-)executed.
+
+    Returns:
+        The ``RetryPolicy`` to use for this node's backoff delays.
+    """
+    preset_name = node.attrs.get("retry_preset")
+    if preset_name:
+        policy = RETRY_PRESETS.get(str(preset_name))
+        if policy is not None:
+            return policy
+    return _PIPELINE_RETRY
+
+
 # ------------------------------------------------------------------ #
 # Handler protocol
 # ------------------------------------------------------------------ #
@@ -701,7 +724,7 @@ async def run_pipeline(
             if retry_count < max_retries:
                 node_retry_counts[current_node.id] = retry_count + 1
                 # Exponential backoff with jitter (Spec §3.6)
-                delay = _PIPELINE_RETRY.compute_delay(retry_count)
+                delay = _get_retry_policy(current_node).compute_delay(retry_count)
                 await anyio.sleep(delay)
                 continue  # retry same node
             # Max retries exhausted -- fall through to edge selection
