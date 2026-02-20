@@ -213,15 +213,19 @@ class TestPipelineDefaultUnchanged:
 
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 GEMINI_KEY = os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 HAS_OPENAI = bool(OPENAI_KEY)
 HAS_GEMINI = bool(GEMINI_KEY)
+HAS_ANTHROPIC = bool(ANTHROPIC_KEY)
 
 skip_no_openai = pytest.mark.skipif(not HAS_OPENAI, reason="OPENAI_API_KEY not set")
 skip_no_gemini = pytest.mark.skipif(not HAS_GEMINI, reason="GOOGLE_API_KEY not set")
+skip_no_anthropic = pytest.mark.skipif(not HAS_ANTHROPIC, reason="ANTHROPIC_API_KEY not set")
 
 OPENAI_MODEL = "gpt-4.1-mini"
 GEMINI_MODEL = "gemini-2.0-flash"
+ANTHROPIC_MODEL = "claude-haiku-4-5"
 
 # Long enough system prompt to cross the OpenAI 1024-token prefix-caching threshold
 # and encourage Gemini implicit caching.  Repeated verbatim across turns so the
@@ -284,6 +288,61 @@ class TestOpenAICacheEfficiency:
             f"Expected cache_read_tokens > 0 across {len(_TURNS)} turns with a "
             f"{len(_LONG_SYSTEM)}-char system prompt, got 0 total cache reads. "
             "OpenAI prefix caching may not be active for this account/region."
+        )
+
+
+class TestAnthropicCacheEfficiency:
+    """Live cache-efficiency check for Anthropic prompt caching (S8.6.9).
+
+    Anthropic's prompt caching requires explicit cache_control markers.
+    The adapter auto-injects them (§2.10), so repeated multi-turn calls with
+    the same long system prompt should report cache_read_tokens.
+
+    Assertion threshold: by turn 5, cache_read_tokens / input_tokens > 0.50,
+    indicating the majority of input tokens are served from cache.
+    """
+
+    @skip_no_anthropic
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            "Anthropic prompt caching is provider-side and may not trigger for "
+            "every account/region; xfail permits the test to be informative "
+            "without being a hard gate."
+        ),
+    )
+    async def test_anthropic_cache_efficiency_live(self) -> None:
+        """Multi-turn conversation; by turn 5, cache_read / input > 50%."""
+        from attractor_llm import Client, ProviderConfig, RetryPolicy, generate
+        from attractor_llm.adapters.anthropic import AnthropicAdapter
+
+        client = Client(retry_policy=RetryPolicy(max_retries=1))
+        client.register_adapter(
+            "anthropic", AnthropicAdapter(ProviderConfig(api_key=ANTHROPIC_KEY, timeout=60.0))
+        )
+
+        cumulative_cache_reads = 0
+        cumulative_input = 0
+
+        for turn, user_msg in enumerate(_TURNS, start=1):
+            result = await generate(
+                client,
+                ANTHROPIC_MODEL,
+                user_msg,
+                system=_LONG_SYSTEM,
+                provider="anthropic",
+            )
+            assert result.total_usage.input_tokens > 0, f"Turn {turn}: expected input_tokens > 0"
+            cumulative_cache_reads += result.total_usage.cache_read_tokens
+            cumulative_input += result.total_usage.input_tokens
+
+        # By turn 5 the majority of input tokens should come from the cache
+        cache_ratio = cumulative_cache_reads / cumulative_input if cumulative_input > 0 else 0.0
+        assert cache_ratio > 0.50, (
+            f"Expected cache_read / input_tokens > 0.50 across {len(_TURNS)} turns "
+            f"(got {cumulative_cache_reads}/{cumulative_input} = {cache_ratio:.2%}). "
+            "Anthropic prompt caching may not be active for this account/model."
         )
 
 

@@ -59,8 +59,14 @@ class SubagentManager:
         result = await manager.wait_for_output(agent_id)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, depth: int = 0, max_depth: int = 1) -> None:
         self._agents: dict[str, TrackedSubagent] = {}
+        # Depth tracking for the interactive spawn path (Spec §9.9.4).
+        # _depth is the depth of *this* manager (0 = top-level).
+        # Spawned subagents are at depth _depth + 1 and are not allowed
+        # to exceed max_depth.
+        self._depth: int = depth
+        self._max_depth: int = max_depth
 
     @property
     def active_agents(self) -> dict[str, TrackedSubagent]:
@@ -72,7 +78,7 @@ class SubagentManager:
         client: Any,
         prompt: str,
         *,
-        parent_depth: int = 0,
+        parent_depth: int | None = None,
         max_depth: int = 1,
         model: str | None = None,
         provider: str | None = None,
@@ -96,9 +102,14 @@ class SubagentManager:
         close_agent.
 
         Raises:
-            MaxDepthError: If parent_depth >= max_depth.
+            MaxDepthError: If the depth limit would be exceeded. Spec §9.9.4.
         """
-        child_depth = parent_depth + 1
+        # Use the manager's own depth tracking as the default parent depth so
+        # that the interactive spawn path (spawn_agent tool) enforces the same
+        # limit as the fire-and-forget path.  Callers may override parent_depth.
+        effective_parent_depth = parent_depth if parent_depth is not None else self._depth
+
+        child_depth = effective_parent_depth + 1
         if child_depth > max_depth:
             raise MaxDepthError(
                 f"Subagent depth limit exceeded: depth {child_depth} > max {max_depth}"

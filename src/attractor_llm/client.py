@@ -195,13 +195,33 @@ class Client:
         Note: Streaming does not retry mid-stream. If the stream fails
         after partial data has been delivered, a StreamError is raised.
         Retry only applies to the initial connection.
+
+        When ``abort_signal`` is set mid-stream, the underlying HTTP connection
+        is closed by calling ``aclose()`` on the async generator. Spec §8.4.9.
         """
         if abort_signal is not None and abort_signal.is_set:
             from attractor_llm.errors import AbortError
 
             raise AbortError("Stream aborted by signal")
         adapter = self._resolve_adapter(request)
-        return adapter.stream(request)  # type: ignore[return-value]
+        raw_stream = adapter.stream(request)
+
+        if abort_signal is None:
+            return raw_stream  # type: ignore[return-value]
+
+        # Wrap stream to check abort_signal on each event and close the
+        # underlying HTTP connection (aclose() propagates into the adapter's
+        # async-with httpx block) when the signal fires. Spec §8.4.9.
+        async def _abort_aware() -> AsyncIterator[StreamEvent]:
+            async for event in raw_stream:  # type: ignore[union-attr]
+                if abort_signal.is_set:
+                    await raw_stream.aclose()  # type: ignore[union-attr]
+                    from attractor_llm.errors import AbortError
+
+                    raise AbortError("Stream aborted by signal")
+                yield event
+
+        return _abort_aware()
 
     async def close(self) -> None:
         """Close all registered adapters and release resources."""
