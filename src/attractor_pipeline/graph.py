@@ -29,7 +29,16 @@ class NodeShape(StrEnum):
 
     @classmethod
     def handler_for_shape(cls, shape: str) -> str:
-        """Map a shape to its default handler type."""
+        """Map a shape to its default handler type.
+
+        Mapping verified against attractor-spec §2.8 (Wave 14 swarm review):
+          hexagon  → manager     (sub-pipeline orchestrator)
+          house    → wait.human  (human approval gate)
+        The audit §11.6.4 suggested swapping these, but the spec §2.8 defines
+        hexagon as the "orchestrator/manager" shape and house as the
+        "human gate" shape.  Our Wave 14 review confirmed the mapping below
+        is correct -- the audit report had the direction reversed.
+        """
         mapping: dict[str, str] = {
             "box": "codergen",
             "hexagon": "manager",

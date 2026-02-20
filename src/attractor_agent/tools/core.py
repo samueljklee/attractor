@@ -51,6 +51,41 @@ def get_environment() -> ExecutionEnvironment:
 
 
 # ------------------------------------------------------------------ #
+# Process registration callback (§9.1.6)
+# ------------------------------------------------------------------ #
+
+# Optional callback invoked when the shell tool spawns a subprocess.
+# Session.register_process can be wired here so that LLM-initiated
+# shell commands are automatically tracked for graceful abort/cleanup.
+# Once LocalEnvironment exposes subprocess objects through its protocol,
+# the _shell() function below will call this with the live process.
+_process_callback: Any | None = None
+
+
+def set_process_callback(callback: Any | None) -> None:
+    """Set a callback to be invoked when a subprocess is created.
+
+    The callback signature is: ``callback(proc: asyncio.subprocess.Process)``
+
+    Session sets this to ``session.register_process`` so that any shell
+    command spawned inside the agent loop is automatically tracked for
+    graceful SIGTERM/SIGKILL on abort.  Pass ``None`` to clear.
+
+    Note: The callback is called only when the execution environment
+    surfaces the subprocess object.  Currently LocalEnvironment wraps
+    the process internally; full auto-registration requires an
+    environment protocol extension (env.last_process or similar).
+    """
+    global _process_callback  # noqa: PLW0603
+    _process_callback = callback
+
+
+def get_process_callback() -> Any | None:
+    """Return the current process registration callback, or None."""
+    return _process_callback
+
+
+# ------------------------------------------------------------------ #
 # Shell command timeout ceiling (Spec §2.2)
 # ------------------------------------------------------------------ #
 
@@ -510,8 +545,17 @@ async def _grep(
             return f"grep error: {result.stderr}"
         return result.stdout.strip() or f"No matches for '{pattern}'"
 
-    # Local mode: fast host-side implementation
+    # Local mode: fast host-side implementation.
+    # Intentional design (§9.4.1): grep/glob/list_dir run directly on the
+    # host filesystem for performance, bypassing ExecutionEnvironment.exec_shell.
+    # The same is true for _glob() and _list_dir().  Path confinement via
+    # _check_path_allowed() is enforced below as the security boundary.
     search_path = Path(path).expanduser().resolve()
+
+    # Security: path confinement (mirrors _read_file / _list_dir)
+    path_error = _check_path_allowed(search_path)
+    if path_error:
+        raise PermissionError(path_error)
 
     if not search_path.exists():
         raise FileNotFoundError(f"Path not found: {path}")

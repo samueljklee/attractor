@@ -66,7 +66,11 @@ class StreamAccumulator:
     def feed(self, event: StreamEvent) -> None:
         """Process a single stream event."""
         match event.kind:
-            case StreamEventKind.START:
+            case StreamEventKind.START | StreamEventKind.STREAM_START:
+                # §8.4.5: Accept both legacy START and canonical STREAM_START.
+                # Adapters now emit STREAM_START; StreamAccumulator handles both
+                # so that older producers and newer producers work without any
+                # migration window.
                 self._started = True
                 if event.model:
                     self._model = event.model

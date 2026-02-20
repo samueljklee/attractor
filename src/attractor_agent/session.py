@@ -105,8 +105,12 @@ class SessionConfig:
 class _LoopDetector:
     """Detects stuck tool-call loops. Spec §2.10.
 
-    Tracks recent tool call signatures (name + truncated args) and
-    triggers when the same signature appears too many times in the window.
+    Detects two classes of loops:
+    1. Repetition: the same tool call signature appears >= ``threshold``
+       times within the last ``window`` calls (original behaviour).
+    2. Alternating cycle: the last ``threshold * 2`` calls form a repeating
+       A→B→A→B (or longer) pattern that doesn't trigger the repetition check
+       because no single signature dominates.  Spec §9.1.7.
     """
 
     window: int = 4
@@ -120,14 +124,42 @@ class _LoopDetector:
         sig = f"{tool_name}:{args_str}"
 
         self._recent.append(sig)
-        if len(self._recent) > self.window:
-            self._recent = self._recent[-self.window :]
+        # Keep a larger sliding window to support cycle detection (§9.1.7):
+        # we need threshold*2 entries to recognise a repeating pair/triple.
+        max_window = max(self.window, self.threshold * 2)
+        if len(self._recent) > max_window:
+            self._recent = self._recent[-max_window:]
 
-        # Check if any signature appears >= threshold times in the window
+        # --- Check 1: single-signature repetition (original) ---
         from collections import Counter
 
-        counts = Counter(self._recent)
-        return any(count >= self.threshold for count in counts.values())
+        window_slice = self._recent[-self.window :]
+        counts = Counter(window_slice)
+        if any(count >= self.threshold for count in counts.values()):
+            return True
+
+        # --- Check 2: alternating / cyclic pattern (§9.1.7) ---
+        # Look for a repeating sequence of length k (2 ≤ k ≤ threshold) in the
+        # last threshold*2 entries.  A cycle is detected when the entire tail
+        # consists solely of a repeated length-k pattern with ≥ 2 full repeats.
+        # We require only 2 repeats (not `threshold`) because a tail of
+        # threshold*2 entries can hold exactly 2 repeats of a cycle whose
+        # length equals threshold -- requiring more would miss longer cycles.
+        tail = self._recent[-(self.threshold * 2) :]
+        if len(tail) < self.threshold * 2:
+            return False  # not enough history yet
+
+        for cycle_len in range(2, self.threshold + 1):
+            if len(tail) % cycle_len != 0:
+                continue  # tail length must be evenly divisible by cycle_len
+            pattern = tail[:cycle_len]
+            # Verify the entire tail is this pattern tiled end-to-end
+            all_match = all(tail[i] == pattern[i % cycle_len] for i in range(len(tail)))
+            full_repeats = len(tail) // cycle_len
+            if all_match and full_repeats >= 2:
+                return True
+
+        return False
 
     def reset(self) -> None:
         self._recent.clear()
@@ -221,10 +253,13 @@ class Session:
         # Tracked subagent tasks for safe cleanup (Spec Appendix B)
         self._subagent_tasks: set[asyncio.Task[object]] = set()
 
-        # TODO: Populated when streaming LLM tasks are created (§9.11 Step 1).
-        # Currently scaffolding -- no production code populates this set yet.
-        # The cleanup mechanism works but is inert until client.stream() is wired.
+        # §9.11.5: Populated with asyncio.Task objects while LLM calls are
+        # in-flight so that abort() can cancel them immediately.
         self._active_tasks: set[asyncio.Task[object]] = set()
+
+        # §9.10.4: Track whether SESSION_START has been emitted so submit()
+        # can emit it lazily when the context manager is not used.
+        self._session_started: bool = False
 
         # Tracked OS-level processes for graceful shutdown (§9.1.6, §9.11.5).
         # Populated by callers that spawn asyncio subprocesses and want them
@@ -337,6 +372,14 @@ class Session:
         if self._state == SessionState.PROCESSING:
             raise RuntimeError("Session is already processing a request")
 
+        # §9.10.4: Emit SESSION_START lazily on the first submit() call when
+        # the session is used without the async-context-manager (i.e. without
+        # ``async with Session() as s:``).  Using the context manager sets
+        # _session_started=True in __aenter__ so this branch is skipped there.
+        if not self._session_started:
+            await self._emitter.emit(SessionEvent(kind=EventKind.SESSION_START))
+            self._session_started = True
+
         self._state = SessionState.PROCESSING
         self._turn_count += 1
 
@@ -430,6 +473,7 @@ class Session:
 
     async def __aenter__(self) -> Session:
         await self._emitter.emit(SessionEvent(kind=EventKind.SESSION_START))
+        self._session_started = True
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -475,8 +519,15 @@ class Session:
                 )
                 return "[Tool round limit reached]"
 
-            # Build and send LLM request
-            response = await self._call_llm()
+            # §9.11.5: Wrap the LLM call in a tracked task so that
+            # _cleanup_on_abort() can cancel in-flight requests when the
+            # session is aborted mid-generation.
+            _llm_task: asyncio.Task[Response] = asyncio.create_task(self._call_llm())
+            self._active_tasks.add(_llm_task)
+            try:
+                response = await _llm_task
+            finally:
+                self._active_tasks.discard(_llm_task)
 
             # Track usage
             self._total_usage = self._total_usage + response.usage

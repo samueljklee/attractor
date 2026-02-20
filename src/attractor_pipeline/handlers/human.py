@@ -108,6 +108,14 @@ class Interviewer(Protocol):
     ) -> str:
         """Ask the human a question and return their response (flat API).
 
+        §11.8.1 — Design note: ``ask()`` intentionally returns ``str``, not
+        ``Answer``.  This is the *minimum contract* of the ``Interviewer``
+        protocol so that external implementors only need to provide a simple
+        string-returning coroutine.  The richer ``ask_question() -> Answer``
+        method is available on all concrete implementations (bridged via
+        ``ask_question_via_ask()``) but is NOT part of the Protocol itself,
+        keeping the protocol surface minimal and easy to satisfy.
+
         Args:
             question: The question text to present.
             options: Optional list of valid choices (e.g., ["yes", "no"]).

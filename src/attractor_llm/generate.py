@@ -574,6 +574,16 @@ async def generate_object(
     Raises:
         NoObjectGeneratedError: If the response is not valid JSON.
     """
+    # §8.9.25/27: When provider is None but schema is given, auto-resolve the
+    # provider from the model catalog so native structured output is used for
+    # OpenAI and Gemini models rather than always falling back to prompt injection.
+    if provider is None and schema:
+        from attractor_llm.catalog import get_model_info as _get_model_info
+
+        _info = _get_model_info(model)
+        if _info:
+            provider = _info.provider
+
     # §8.4.7: Use native response_format for providers that support it.
     # Anthropic has no native structured-output mode; unknown providers also
     # fall back to prompt injection.

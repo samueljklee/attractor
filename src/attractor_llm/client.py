@@ -59,6 +59,16 @@ class Client:
         self._adapters: dict[str, ProviderAdapter] = {}
         self._default_provider: str | None = default_provider
         self._retry_policy = retry_policy or RetryPolicy()
+        # §8.1.6: Emit a deprecation warning when middleware is supplied so
+        # callers know to switch to apply_middleware() instead.
+        if middleware:
+            import warnings
+
+            warnings.warn(
+                "Client(middleware=) is deprecated. Use apply_middleware() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._middleware = middleware or []  # stored but not applied (see above)
         if providers:
             for provider_name, adapter in providers.items():
