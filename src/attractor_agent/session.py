@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import os
+import signal as _signal
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -176,6 +177,20 @@ class Session:
             # Merge profile-provided tools with any explicitly passed tools list.
             base_tools: list[Tool] = list(tools) if tools else []
             tools = profile.get_tools(base_tools)
+
+        # Wire subagent tools with real client (§9.12.34-36)
+        # Done here -- not in profiles -- so the tools close over the real client.
+        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
+
+        manager = SubagentManager()
+        subagent_tools = create_interactive_tools(manager, client=self._client)
+        tools_list: list[Tool] = list(tools) if tools else []
+        existing_names = {t.name for t in tools_list}
+        for t in subagent_tools:
+            if t.name not in existing_names:
+                tools_list.append(t)
+                existing_names.add(t.name)
+        tools = tools_list
 
         # P11: If an ExecutionEnvironment is supplied, install it as the
         # module-level environment used by all tool implementations. Spec §9.1.
@@ -699,16 +714,14 @@ class Session:
         # _tracked_processes holds asyncio.subprocess.Process objects registered
         # by callers.  Full automatic tracking requires env protocol changes
         # (e.g. an env.kill_all_processes() method on LocalEnvironment).
-        import signal as _signal
-
         _alive: list[asyncio.subprocess.Process] = []
         for proc in self._tracked_processes:
             if proc.returncode is None:  # still running
                 try:
                     proc.send_signal(_signal.SIGTERM)
                     _alive.append(proc)
-                except ProcessLookupError:
-                    pass  # already exited between check and signal
+                except (ProcessLookupError, PermissionError):
+                    pass  # already exited or insufficient permissions
 
         # --- Step 3: Wait up to 2 seconds for processes to exit. ---
         if _alive:
@@ -725,8 +738,8 @@ class Session:
             if proc.returncode is None:  # still running after SIGTERM + wait
                 try:
                     proc.send_signal(_signal.SIGKILL)
-                except ProcessLookupError:
-                    pass  # already exited
+                except (ProcessLookupError, PermissionError):
+                    pass  # already exited or insufficient permissions
         self._tracked_processes.clear()
 
         # --- Step 5: Drain and discard pending work queues. ---

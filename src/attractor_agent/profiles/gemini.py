@@ -43,10 +43,9 @@ class GeminiProfile:
 
         Also injects list_dir and read_many_files if not already present
         (Spec §3.6: Gemini profile tool list).
-        Also injects subagent tools (spawn_agent, send_input, wait,
-        close_agent) for interactive multi-agent workflows (§9.12.34-36).
+        Subagent tools (spawn_agent, send_input, wait, close_agent) are
+        injected at Session level with a real client (§9.12.34-36).
         """
-        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
         from attractor_agent.tools.core import LIST_DIR, READ_MANY_FILES
 
         tools: list[Tool] = []
@@ -79,12 +78,6 @@ class GeminiProfile:
                         execute=READ_MANY_FILES.execute,
                     )
                 )
-            # Inject subagent tools if not already present (§9.12.34-36)
-            existing_names = {t.name for t in tools}
-            subagent_tools = create_interactive_tools(SubagentManager())
-            for t in subagent_tools:
-                if t.name not in existing_names:
-                    tools.append(t)
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:

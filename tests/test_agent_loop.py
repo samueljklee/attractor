@@ -392,4 +392,6 @@ class TestSession:
         client = Client()
         session = Session(client=client, tools=ALL_CORE_TOOLS)
         assert session.tool_registry.has("read_file")
-        assert len(session.tool_registry.definitions()) == 6
+        # Session always injects 4 subagent tools (§9.12.34-36), so count is
+        # len(ALL_CORE_TOOLS) + 4 subagent tools = 6 + 4 = 10.
+        assert len(session.tool_registry.definitions()) == len(ALL_CORE_TOOLS) + 4

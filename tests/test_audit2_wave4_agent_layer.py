@@ -78,86 +78,91 @@ def _stub_tool(name: str = "stub") -> Any:
     )
 
 
-class TestOpenAIProfileIncludesSubagentTools:
-    """§9.12.34 - OpenAI profile wires subagent tools."""
+class TestOpenAIProfileDoesNotInjectSubagentTools:
+    """§9.12.34 - Subagent tools come from Session, not the OpenAI profile."""
 
-    def test_openai_profile_includes_subagent_tools(self) -> None:
+    def test_openai_profile_does_not_inject_subagent_tools(self) -> None:
+        """Profile.get_tools() must NOT include subagent tools -- Session does that."""
         from attractor_agent.profiles.openai import OpenAIProfile
 
         profile = OpenAIProfile()
         tools = profile.get_tools([_stub_tool("read_file")])
         tool_names = {t.name for t in tools}
 
-        missing = SUBAGENT_TOOL_NAMES - tool_names
-        assert not missing, f"OpenAI profile missing subagent tools: {missing}. Got: {tool_names}"
-
-    def test_openai_profile_subagent_tools_no_duplicates(self) -> None:
-        """Dedup guard: calling with pre-existing subagent tools doesn't duplicate."""
-        from attractor_agent.profiles.openai import OpenAIProfile
-        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
-
-        profile = OpenAIProfile()
-        # Pre-seed with subagent tools
-        base = [_stub_tool("read_file")] + create_interactive_tools(SubagentManager())
-        tools = profile.get_tools(base)
-        tool_names = [t.name for t in tools]
-        for name in SUBAGENT_TOOL_NAMES:
-            count = tool_names.count(name)
-            assert count == 1, f"Tool '{name}' appears {count} times (expected 1)"
-
-
-class TestAnthropicProfileIncludesSubagentTools:
-    """§9.12.35 - Anthropic profile wires subagent tools."""
-
-    def test_anthropic_profile_includes_subagent_tools(self) -> None:
-        from attractor_agent.profiles.anthropic import AnthropicProfile
-
-        profile = AnthropicProfile()
-        tools = profile.get_tools([_stub_tool("read_file")])
-        tool_names = {t.name for t in tools}
-
-        missing = SUBAGENT_TOOL_NAMES - tool_names
-        assert not missing, (
-            f"Anthropic profile missing subagent tools: {missing}. Got: {tool_names}"
+        injected = SUBAGENT_TOOL_NAMES & tool_names
+        assert not injected, (
+            f"OpenAI profile must NOT inject subagent tools (Session does). Found: {injected}"
         )
 
-    def test_anthropic_profile_subagent_tools_no_duplicates(self) -> None:
+
+class TestAnthropicProfileDoesNotInjectSubagentTools:
+    """§9.12.35 - Subagent tools come from Session, not the Anthropic profile."""
+
+    def test_anthropic_profile_does_not_inject_subagent_tools(self) -> None:
+        """Profile.get_tools() must NOT include subagent tools -- Session does that."""
         from attractor_agent.profiles.anthropic import AnthropicProfile
-        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
 
         profile = AnthropicProfile()
-        base = [_stub_tool("read_file")] + create_interactive_tools(SubagentManager())
-        tools = profile.get_tools(base)
-        tool_names = [t.name for t in tools]
-        for name in SUBAGENT_TOOL_NAMES:
-            count = tool_names.count(name)
-            assert count == 1, f"Tool '{name}' appears {count} times (expected 1)"
+        tools = profile.get_tools([_stub_tool("read_file")])
+        tool_names = {t.name for t in tools}
+
+        injected = SUBAGENT_TOOL_NAMES & tool_names
+        assert not injected, (
+            f"Anthropic profile must NOT inject subagent tools (Session does). Found: {injected}"
+        )
 
 
-class TestGeminiProfileIncludesSubagentTools:
-    """§9.12.36 - Gemini profile wires subagent tools."""
+class TestGeminiProfileDoesNotInjectSubagentTools:
+    """§9.12.36 - Subagent tools come from Session, not the Gemini profile."""
 
-    def test_gemini_profile_includes_subagent_tools(self) -> None:
+    def test_gemini_profile_does_not_inject_subagent_tools(self) -> None:
+        """Profile.get_tools() must NOT include subagent tools -- Session does that."""
         from attractor_agent.profiles.gemini import GeminiProfile
 
         profile = GeminiProfile()
         tools = profile.get_tools([_stub_tool("read_file")])
         tool_names = {t.name for t in tools}
 
+        injected = SUBAGENT_TOOL_NAMES & tool_names
+        assert not injected, (
+            f"Gemini profile must NOT inject subagent tools (Session does). Found: {injected}"
+        )
+
+
+class TestSessionInjectsFunctionalSubagentTools:
+    """§9.12.34-36 - Session wires all 4 subagent tools with the real client."""
+
+    @pytest.mark.asyncio
+    async def test_session_injects_all_subagent_tools(self) -> None:
+        """Session tool registry includes spawn_agent, send_input, wait, close_agent."""
+        client = _make_mock_client(_make_text_response("ok"))
+        config = SessionConfig(model="mock-model", provider="mock")
+        session = Session(client=client, config=config)
+
+        tool_names = {t.name for t in session.tool_registry.definitions()}
         missing = SUBAGENT_TOOL_NAMES - tool_names
-        assert not missing, f"Gemini profile missing subagent tools: {missing}. Got: {tool_names}"
+        assert not missing, f"Session missing subagent tools: {missing}. Registry has: {tool_names}"
 
-    def test_gemini_profile_subagent_tools_no_duplicates(self) -> None:
-        from attractor_agent.profiles.gemini import GeminiProfile
-        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
+    @pytest.mark.asyncio
+    async def test_session_injects_functional_subagent_tools(self) -> None:
+        """spawn_agent injected by Session has a real client -- no 'no client' error."""
+        client = _make_mock_client(_make_text_response("ok"))
+        config = SessionConfig(model="mock-model", provider="mock")
+        session = Session(client=client, config=config)
 
-        profile = GeminiProfile()
-        base = [_stub_tool("read_file")] + create_interactive_tools(SubagentManager())
-        tools = profile.get_tools(base)
-        tool_names = [t.name for t in tools]
-        for name in SUBAGENT_TOOL_NAMES:
-            count = tool_names.count(name)
-            assert count == 1, f"Tool '{name}' appears {count} times (expected 1)"
+        tools_by_name = {t.name: t for t in session.tool_registry.definitions()}
+        assert "spawn_agent" in tools_by_name, "spawn_agent must be in Session tool registry"
+
+        spawn = tools_by_name["spawn_agent"]
+        assert spawn.execute is not None, "spawn_agent must have an execute handler"
+
+        # With a real client wired, the tool should NOT return the "no client" error.
+        # (It may fail for other reasons with the mock, but not for missing client.)
+        result = await spawn.execute(prompt="Do something")
+        assert "requires an LLM client" not in result, (
+            f"spawn_agent should not return 'no client' error when Session has a client. "
+            f"Got: {result!r}"
+        )
 
 
 class TestCreateInteractiveToolsReturnsAllFour:
@@ -314,8 +319,14 @@ class TestEnrichedSystemPromptIncludesToolDescriptions:
             assert tool_name in prompt, f"Tool '{tool_name}' missing from enriched system prompt"
 
     @pytest.mark.asyncio
-    async def test_enriched_system_prompt_no_tools_section_when_empty(self) -> None:
-        """When no tools are registered, the available_tools section is omitted."""
+    async def test_enriched_system_prompt_includes_subagent_tools_even_when_no_explicit_tools(
+        self,
+    ) -> None:
+        """Session always injects subagent tools, so available_tools is always present.
+
+        Even when tools=[] is passed, Session.__init__ wires the 4 subagent tools
+        (§9.12.34-36), so the <available_tools> section always appears.
+        """
         client = _make_mock_client(_make_text_response("Hi"))
         config = SessionConfig(model="mock-model", provider="mock")
         session = Session(client=client, config=config, tools=[])
@@ -330,8 +341,12 @@ class TestEnrichedSystemPromptIncludesToolDescriptions:
         ):
             prompt = session._build_enriched_system_prompt()
 
-        assert "<available_tools>" not in prompt, (
-            "No <available_tools> block expected when tool registry is empty"
+        # Session always injects subagent tools, so available_tools section must exist
+        assert "<available_tools>" in prompt, (
+            "Session always injects subagent tools, so <available_tools> must appear"
+        )
+        assert "spawn_agent" in prompt, (
+            "spawn_agent must appear in the enriched system prompt (always injected)"
         )
 
 

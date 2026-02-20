@@ -130,6 +130,13 @@ async def spawn_subagent(
             tools=tools,
             abort_signal=abort_signal,
         )
+        # Session.__init__ always injects subagent tools (§9.12.34-36).
+        # At max depth the child must not be able to spawn further; remove it.
+        if child_depth >= max_depth:
+            session.tool_registry.unregister("spawn_agent")
+            session.tool_registry.unregister("send_input")
+            session.tool_registry.unregister("wait")
+            session.tool_registry.unregister("close_agent")
         result_text = await session.submit(prompt)
     except Exception as exc:
         raise SubagentError(f"Subagent failed: {type(exc).__name__}: {exc}") from exc

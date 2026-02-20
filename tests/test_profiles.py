@@ -132,7 +132,7 @@ class TestSystemPromptContent:
 
 class TestToolCustomization:
     def test_all_profiles_return_expected_tools(self):
-        for provider, expected_count in [("anthropic", 10), ("openai", 11), ("gemini", 12)]:
+        for provider, expected_count in [("anthropic", 6), ("openai", 7), ("gemini", 8)]:
             p = get_profile(provider)
             tools = p.get_tools(list(ALL_CORE_TOOLS))
             assert len(tools) == expected_count, (
@@ -383,8 +383,10 @@ class TestProfileEdgeCases:
         assert "custom_tool" in tool_names, f"custom_tool missing from {tool_names}"
         custom = next(t for t in tools if t.name == "custom_tool")
         assert custom.description == "A custom tool"
-        # Subagent tools are also injected by design (§9.12.34-36)
-        assert "spawn_agent" in tool_names
+        # Subagent tools are injected at Session level (not by the profile)
+        assert "spawn_agent" not in tool_names, (
+            "Profile must NOT inject spawn_agent -- that is Session's responsibility"
+        )
 
     def test_multiple_apply_to_config_is_idempotent(self):
         """Applying the same profile twice doesn't change values."""

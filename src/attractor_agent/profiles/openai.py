@@ -43,10 +43,9 @@ class OpenAIProfile:
 
         Also injects apply_patch if not already present -- OpenAI models
         prefer the v4a unified-diff format for code changes (§9.2).
-        Also injects subagent tools (spawn_agent, send_input, wait,
-        close_agent) for interactive multi-agent workflows (§9.12.34-36).
+        Subagent tools (spawn_agent, send_input, wait, close_agent) are
+        injected at Session level with a real client (§9.12.34-36).
         """
-        from attractor_agent.subagent_manager import SubagentManager, create_interactive_tools
         from attractor_agent.tools.core import APPLY_PATCH
 
         tools: list[Tool] = []
@@ -63,13 +62,6 @@ class OpenAIProfile:
             )
         if base_tools and not has_apply_patch:
             tools.append(APPLY_PATCH)
-        # Inject subagent tools if not already present (§9.12.34-36)
-        if base_tools:
-            existing_names = {t.name for t in tools}
-            subagent_tools = create_interactive_tools(SubagentManager())
-            for t in subagent_tools:
-                if t.name not in existing_names:
-                    tools.append(t)
         return tools
 
     def apply_to_config(self, config: SessionConfig) -> SessionConfig:

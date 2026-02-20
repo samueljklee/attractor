@@ -105,6 +105,9 @@ class EventEmitter:
 
         Puts a sentinel ``None`` onto the queue so that the async generator
         returned by ``events()`` exits cleanly. Safe to call multiple times.
+
+        Note: Unblocks one pending events() consumer. Multiple concurrent
+        consumers are not supported.
         """
         await self._queue.put(None)
 
@@ -118,6 +121,10 @@ class EventEmitter:
 
         The generator exits when ``close()`` is called (or when a ``None``
         sentinel is received from the queue).
+
+        Note: Only one concurrent consumer is supported. If multiple coroutines
+        call events(), each event goes to only one of them (queue semantics).
+        The close() sentinel only unblocks one consumer.
         """
         while True:
             item = await self._queue.get()
