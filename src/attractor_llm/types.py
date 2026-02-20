@@ -545,6 +545,61 @@ class GenerateResult:
         return bool(self.text)
 
 
+@dataclass
+class GenerateObjectResult(GenerateResult):
+    """Result of generate_object() with the parsed JSON object. Spec §8.4.7.
+
+    Extends GenerateResult so callers have access to step history, usage,
+    and the raw JSON text in addition to the parsed dict.
+
+    Backward-compatible: ``result == some_dict`` compares against
+    ``parsed_object``, and ``result["key"]`` / ``result.keys()`` /
+    iteration all delegate to ``parsed_object`` so existing callers that
+    treat the return value as a plain dict continue to work.
+
+    Attributes:
+        parsed_object: The parsed JSON dict returned by the model.
+    """
+
+    parsed_object: dict[str, Any] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------ #
+    # Dict-compatibility shim (backward compat for callers expecting dict)
+    # ------------------------------------------------------------------ #
+
+    def __eq__(self, other: object) -> bool:  # type: ignore[override]
+        if isinstance(other, dict):
+            return self.parsed_object == other
+        return super().__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(self.text)
+
+    def __getitem__(self, key: str) -> Any:
+        return self.parsed_object[key]
+
+    def __iter__(self) -> Any:  # type: ignore[override]
+        return iter(self.parsed_object)
+
+    def __len__(self) -> int:
+        return len(self.parsed_object)
+
+    def __contains__(self, item: object) -> bool:
+        return item in self.parsed_object
+
+    def keys(self) -> Any:
+        return self.parsed_object.keys()
+
+    def values(self) -> Any:
+        return self.parsed_object.values()
+
+    def items(self) -> Any:
+        return self.parsed_object.items()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.parsed_object.get(key, default)
+
+
 # ------------------------------------------------------------------ #
 # Timeout configuration (Spec §4.7)
 # ------------------------------------------------------------------ #

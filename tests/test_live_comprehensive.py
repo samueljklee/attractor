@@ -375,13 +375,16 @@ class TestGenerateObjectAllProviders:
         )
         self._assert_person(obj)
 
-    def _assert_person(self, obj: dict[str, Any]) -> None:
-        assert isinstance(obj, dict)
-        assert "name" in obj, f"Missing 'name' key, got: {obj}"
-        assert "age" in obj, f"Missing 'age' key, got: {obj}"
+    def _assert_person(self, obj: Any) -> None:
+        # generate_object returns GenerateObjectResult (dict-compatible shim).
+        # Support both raw dict and the result wrapper.
+        data: dict[str, Any] = obj if isinstance(obj, dict) else obj.parsed_object
+        assert isinstance(data, dict), f"Expected dict, got {type(data)}"
+        assert "name" in data, f"Missing 'name' key, got: {data}"
+        assert "age" in data, f"Missing 'age' key, got: {data}"
         # Flexible matching: Alice or alice
-        assert "alice" in obj["name"].lower(), f"Expected 'Alice' in name, got: {obj['name']}"
-        assert obj["age"] == 30, f"Expected age=30, got: {obj['age']}"
+        assert "alice" in data["name"].lower(), f"Expected 'Alice' in name, got: {data['name']}"
+        assert data["age"] == 30, f"Expected age=30, got: {data['age']}"
 
 
 # ================================================================== #

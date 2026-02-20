@@ -39,12 +39,14 @@ from attractor_llm.streaming import StreamAccumulator, StreamResult
 from attractor_llm.types import (
     ContentPart,
     FinishReason,
+    GenerateObjectResult,
     GenerateResult,
     Message,
     Request,
     Response,
     StepResult,
     StreamEvent,
+    TimeoutConfig,
     Tool,
     Usage,
 )
@@ -64,6 +66,7 @@ async def generate(
     reasoning_effort: str | None = None,
     provider: str | None = None,
     abort_signal: Any | None = None,
+    timeout: float | TimeoutConfig | None = None,
 ) -> GenerateResult:
     """Generate text with automatic tool execution loop. Spec §4.3.
 
@@ -82,11 +85,23 @@ async def generate(
         reasoning_effort: Optional reasoning effort.
         provider: Optional provider override.
         abort_signal: Optional abort signal; if set, raises AbortError.
+        timeout: Optional timeout. A float is treated as a total-timeout in
+            seconds. Pass a TimeoutConfig for separate total/per_step control.
+            When TimeoutConfig.total is set, the entire generate() call is
+            wrapped with asyncio.wait_for(). When TimeoutConfig.per_step is
+            set, each individual client.complete() call is wrapped.
 
     Returns:
         GenerateResult with text, step history, and aggregated token usage.
         Backward-compatible: str(result) returns text, result == "string" works.
     """
+    # Normalise timeout. Spec §8.4.10.
+    tc: TimeoutConfig | None = None
+    if isinstance(timeout, (int, float)):
+        tc = TimeoutConfig(total=float(timeout))
+    elif isinstance(timeout, TimeoutConfig):
+        tc = timeout
+
     # Spec §4.3: Cannot provide both prompt and messages
     if prompt is not None and messages is not None:
         from attractor_llm.errors import InvalidRequestError
@@ -102,148 +117,165 @@ async def generate(
     else:
         history = [Message.user(prompt)]  # type: ignore[arg-type]
 
-    steps: list[StepResult] = []
-    total_usage = Usage()
+    async def _complete_with_timeout(request: Request) -> Response:
+        """Wrap client.complete() with optional per-step timeout."""
+        if tc and tc.per_step is not None:
+            return await asyncio.wait_for(client.complete(request), timeout=tc.per_step)
+        return await client.complete(request)
 
-    response: Response | None = None
-    for _round in range(max_rounds + 1):
-        request = Request(
-            model=model,
-            provider=provider,
-            messages=history,
-            system=system,
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=temperature,
-            reasoning_effort=reasoning_effort,
-        )
+    async def _core() -> GenerateResult:
+        steps: list[StepResult] = []
+        total_usage = Usage()
+        _tools_list: list[Tool] = tools or []
 
-        response = await client.complete(request)
-        total_usage = total_usage + response.usage
-        history.append(response.message)
-
-        # Check abort signal after each LLM call
-        if abort_signal is not None and abort_signal.is_set:
-            from attractor_llm.errors import AbortError
-
-            raise AbortError("Generation aborted by signal")
-
-        # If no tool calls, return text
-        if response.finish_reason != FinishReason.TOOL_CALLS:
-            steps.append(StepResult(response=response))
-            return GenerateResult(
-                text=response.text or "",
-                steps=steps,
-                total_usage=total_usage,
-            )
-
-        if not tools:
-            steps.append(StepResult(response=response))
-            return GenerateResult(
-                text=response.text or "",
-                steps=steps,
-                total_usage=total_usage,
-            )
-
-        # Item #6: max_rounds=0 means no automatic tool execution (Spec §4.3)
-        if max_rounds == 0:
-            steps.append(StepResult(response=response))
-            return GenerateResult(
-                text=response.text or "",
-                steps=steps,
-                total_usage=total_usage,
-            )
-
-        # Item #5: Passive tools (no execute handler) return to caller (Spec §5.5)
-        has_passive = False
-        for tc in response.tool_calls:
-            matched = _find_tool(tools, tc.name or "")
-            if matched is not None and not matched.execute:
-                has_passive = True
-                break
-        if has_passive:
-            steps.append(StepResult(response=response))
-            return GenerateResult(
-                text=response.text or "",
-                steps=steps,
-                total_usage=total_usage,
-            )
-
-        # Execute tool calls in parallel (Spec §5.7)
-        async def _exec_one(tc: ContentPart) -> tuple[ContentPart, str, bool]:
+        async def _exec_one(tc_part: ContentPart) -> tuple[ContentPart, str, bool]:
             """Execute a single tool call, return (tool_call, output, is_error)."""
-            tool = _find_tool(tools, tc.name or "")
+            tool = _find_tool(_tools_list, tc_part.name or "")
             if tool and tool.execute:
                 try:
-                    args = tc.arguments
+                    args = tc_part.arguments
                     if isinstance(args, str):
                         try:
                             args = json.loads(args)
                         except json.JSONDecodeError as exc:
-                            return tc, f"ToolArgError: failed to parse JSON arguments: {exc}", True
+                            return (
+                                tc_part,
+                                f"ToolArgError: failed to parse JSON arguments: {exc}",
+                                True,
+                            )
                     # P9: Validate required fields against tool parameter schema (§8.7)
                     if not isinstance(args, dict):
                         kind = type(args).__name__
                         return (
-                            tc,
+                            tc_part,
                             f"ToolArgError: arguments must be a JSON object, got {kind}",
                             True,
                         )
                     validation_error = _validate_tool_args(tool, args)
                     if validation_error:
-                        return tc, validation_error, True
+                        return tc_part, validation_error, True
                     raw = await tool.execute(**args)
                     output = str(raw) if not isinstance(raw, str) else raw
-                    return tc, output, False
+                    return tc_part, output, False
                 except Exception as exc:  # noqa: BLE001
-                    return tc, f"{type(exc).__name__}: {exc}", True
+                    return tc_part, f"{type(exc).__name__}: {exc}", True
             else:
-                return tc, f"Unknown tool: {tc.name}", True
+                return tc_part, f"Unknown tool: {tc_part.name}", True
 
-        if len(response.tool_calls) == 1:
-            exec_results = [await _exec_one(response.tool_calls[0])]
-        else:
-            exec_results = await asyncio.gather(
-                *(_exec_one(tc) for tc in response.tool_calls),
-                return_exceptions=True,
+        response: Response | None = None
+        for _round in range(max_rounds + 1):
+            request = Request(
+                model=model,
+                provider=provider,
+                messages=history,
+                system=system,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature,
+                reasoning_effort=reasoning_effort,
             )
-            # Re-raise fatal exceptions; convert others to error results
-            final_results: list[tuple[ContentPart, str, bool]] = []
-            for i, r in enumerate(exec_results):
-                if isinstance(r, (KeyboardInterrupt, SystemExit)):
-                    raise r
-                if isinstance(r, asyncio.CancelledError):
-                    raise r
-                if isinstance(r, BaseException):
-                    tc = response.tool_calls[i]
-                    final_results.append((tc, f"{type(r).__name__}: {r}", True))
-                else:
-                    final_results.append(r)
-            exec_results = final_results
 
-        for tc, output, is_error in exec_results:
-            history.append(
-                Message.tool_result(
-                    tc.tool_call_id or "",
-                    tc.name or "",
-                    output,
-                    is_error=is_error,
+            response = await _complete_with_timeout(request)
+            total_usage = total_usage + response.usage
+            history.append(response.message)
+
+            # Check abort signal after each LLM call
+            if abort_signal is not None and abort_signal.is_set:
+                from attractor_llm.errors import AbortError
+
+                raise AbortError("Generation aborted by signal")
+
+            # If no tool calls, return text
+            if response.finish_reason != FinishReason.TOOL_CALLS:
+                steps.append(StepResult(response=response))
+                return GenerateResult(
+                    text=response.text or "",
+                    steps=steps,
+                    total_usage=total_usage,
                 )
-            )
 
-        # Record this step
-        tool_results = [
-            ContentPart.tool_result_part(
-                tc.tool_call_id or "", tc.name or "", output, is_error=is_error
-            )
-            for tc, output, is_error in exec_results
-        ]
-        steps.append(StepResult(response=response, tool_results=tool_results))
+            if not tools:
+                steps.append(StepResult(response=response))
+                return GenerateResult(
+                    text=response.text or "",
+                    steps=steps,
+                    total_usage=total_usage,
+                )
 
-    text = "[No response generated]"
-    if response is not None:
-        text = response.text or "[Max tool rounds reached]"
-    return GenerateResult(text=text, steps=steps, total_usage=total_usage)
+            # Item #6: max_rounds=0 means no automatic tool execution (Spec §4.3)
+            if max_rounds == 0:
+                steps.append(StepResult(response=response))
+                return GenerateResult(
+                    text=response.text or "",
+                    steps=steps,
+                    total_usage=total_usage,
+                )
+
+            # Item #5: Passive tools (no execute handler) return to caller (Spec §5.5)
+            has_passive = False
+            for tool_call in response.tool_calls:
+                matched = _find_tool(tools or [], tool_call.name or "")
+                if matched is not None and not matched.execute:
+                    has_passive = True
+                    break
+            if has_passive:
+                steps.append(StepResult(response=response))
+                return GenerateResult(
+                    text=response.text or "",
+                    steps=steps,
+                    total_usage=total_usage,
+                )
+
+            # Execute tool calls in parallel (Spec §5.7)
+            if len(response.tool_calls) == 1:
+                exec_results = [await _exec_one(response.tool_calls[0])]
+            else:
+                exec_results = await asyncio.gather(
+                    *(_exec_one(tc_part) for tc_part in response.tool_calls),
+                    return_exceptions=True,
+                )
+                # Re-raise fatal exceptions; convert others to error results
+                final_results: list[tuple[ContentPart, str, bool]] = []
+                for i, r in enumerate(exec_results):
+                    if isinstance(r, (KeyboardInterrupt, SystemExit)):
+                        raise r
+                    if isinstance(r, asyncio.CancelledError):
+                        raise r
+                    if isinstance(r, BaseException):
+                        tc_part = response.tool_calls[i]
+                        final_results.append((tc_part, f"{type(r).__name__}: {r}", True))
+                    else:
+                        final_results.append(r)
+                exec_results = final_results
+
+            for tc_part, output, is_error in exec_results:
+                history.append(
+                    Message.tool_result(
+                        tc_part.tool_call_id or "",
+                        tc_part.name or "",
+                        output,
+                        is_error=is_error,
+                    )
+                )
+
+            # Record this step
+            tool_results = [
+                ContentPart.tool_result_part(
+                    tc_part.tool_call_id or "", tc_part.name or "", output, is_error=is_error
+                )
+                for tc_part, output, is_error in exec_results
+            ]
+            steps.append(StepResult(response=response, tool_results=tool_results))
+
+        text = "[No response generated]"
+        if response is not None:
+            text = response.text or "[Max tool rounds reached]"
+        return GenerateResult(text=text, steps=steps, total_usage=total_usage)
+
+    # Apply total timeout wrapper if requested. Spec §8.4.10.
+    if tc and tc.total is not None:
+        return await asyncio.wait_for(_core(), timeout=tc.total)
+    return await _core()
 
 
 async def stream(
@@ -255,6 +287,7 @@ async def stream(
     temperature: float | None = None,
     provider: str | None = None,
     abort_signal: Any | None = None,
+    timeout: float | TimeoutConfig | None = None,
 ) -> StreamResult:
     """Stream text generation, returning a StreamResult. Spec §4.4.
 
@@ -277,11 +310,23 @@ async def stream(
         temperature: Optional temperature.
         provider: Optional provider override.
         abort_signal: Optional abort signal for cancellation.
+        timeout: Optional timeout (float = total seconds, or TimeoutConfig).
 
     Returns:
         StreamResult wrapping the live event stream.
+
+    Note:
+        timeout applies to stream connection setup, not full stream consumption.
+        For full-stream timeouts, use abort_signal with an external timer.
     """
     from attractor_llm.streaming import StreamResult
+
+    # Normalise timeout. Spec §8.4.10.
+    tc: TimeoutConfig | None = None
+    if isinstance(timeout, (int, float)):
+        tc = TimeoutConfig(total=float(timeout))
+    elif isinstance(timeout, TimeoutConfig):
+        tc = timeout
 
     request = Request(
         model=model,
@@ -291,7 +336,13 @@ async def stream(
         temperature=temperature,
     )
 
-    event_stream = await client.stream(request, abort_signal=abort_signal)
+    timeout_s = (tc.total if tc.total is not None else tc.per_step) if tc else None
+    if timeout_s is not None:
+        event_stream = await asyncio.wait_for(
+            client.stream(request, abort_signal=abort_signal), timeout=timeout_s
+        )
+    else:
+        event_stream = await client.stream(request, abort_signal=abort_signal)
     return StreamResult(event_stream)
 
 
@@ -309,6 +360,7 @@ async def stream_with_tools(
     reasoning_effort: str | None = None,
     provider: str | None = None,
     abort_signal: Any | None = None,
+    timeout: float | TimeoutConfig | None = None,
 ) -> StreamResult:
     """Stream text generation with an automatic tool execution loop. Spec §8.9.22-24.
 
@@ -337,10 +389,22 @@ async def stream_with_tools(
         reasoning_effort: Optional reasoning effort.
         provider: Optional provider override.
         abort_signal: Optional abort signal for cancellation.
+        timeout: Optional timeout (float = total seconds, or TimeoutConfig).
 
     Returns:
         StreamResult wrapping a multi-turn streaming loop.
+
+    Note:
+        timeout applies to stream connection setup per round, not full stream
+        consumption. For full-stream timeouts, use abort_signal with an external timer.
     """
+    # Normalise timeout. Spec §8.4.10.
+    tc: TimeoutConfig | None = None
+    if isinstance(timeout, (int, float)):
+        tc = TimeoutConfig(total=float(timeout))
+    elif isinstance(timeout, TimeoutConfig):
+        tc = timeout
+
     # Validate input
     if prompt is not None and messages is not None:
         from attractor_llm.errors import InvalidRequestError
@@ -355,8 +419,47 @@ async def stream_with_tools(
         list(messages) if messages is not None else [Message.user(prompt)]  # type: ignore[arg-type]
     )
 
+    async def _stream_one(request: Request) -> AsyncIterator[StreamEvent]:
+        """Start a stream, wrapping with per_step timeout if configured."""
+        if tc and tc.per_step is not None:
+            return await asyncio.wait_for(
+                client.stream(request, abort_signal=abort_signal), timeout=tc.per_step
+            )
+        return await client.stream(request, abort_signal=abort_signal)
+
     async def _loop() -> AsyncIterator[StreamEvent]:
         # Iterate up to max_rounds+1 total LLM calls (mirrors generate() semantics)
+        _st_tools: list[Tool] = tools or []
+
+        async def _exec_one_st(tc_part: ContentPart) -> tuple[ContentPart, str, bool]:
+            """Execute one tool call in the streaming loop."""
+            tool_obj = _find_tool(_st_tools, tc_part.name or "")
+            if tool_obj and tool_obj.execute:
+                try:
+                    args = tc_part.arguments
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError as exc:
+                            return tc_part, f"ToolArgError: failed to parse JSON: {exc}", True
+                    if not isinstance(args, dict):
+                        kind = type(args).__name__
+                        return (
+                            tc_part,
+                            f"ToolArgError: arguments must be a JSON object, got {kind}",
+                            True,
+                        )
+                    validation_error = _validate_tool_args(tool_obj, args)
+                    if validation_error:
+                        return tc_part, validation_error, True
+                    raw = await tool_obj.execute(**args)
+                    output = str(raw) if not isinstance(raw, str) else raw
+                    return tc_part, output, False
+                except Exception as exc:  # noqa: BLE001
+                    return tc_part, f"{type(exc).__name__}: {exc}", True
+            else:
+                return tc_part, f"Unknown tool: {tc_part.name}", True
+
         for _round in range(max_rounds + 1):
             request = Request(
                 model=model,
@@ -369,7 +472,7 @@ async def stream_with_tools(
                 reasoning_effort=reasoning_effort,
             )
 
-            event_stream = await client.stream(request, abort_signal=abort_signal)
+            event_stream = await _stream_one(request)
             acc = StreamAccumulator()
 
             async for event in event_stream:
@@ -395,49 +498,20 @@ async def stream_with_tools(
 
             # §5.5: passive tools (no execute handler) — return control to caller
             has_passive = any(
-                (t := _find_tool(tools, tc.name or "")) is not None and not t.execute
-                for tc in response.tool_calls
+                (t := _find_tool(tools or [], tc_part.name or "")) is not None and not t.execute
+                for tc_part in response.tool_calls
             )
             if has_passive:
                 return  # caller handles tool calls
 
             # Execute tool calls in parallel (§5.7) -- mirrors generate()
-            async def _exec_one(tc: ContentPart) -> tuple[ContentPart, str, bool]:
-                """Execute a single tool call, return (tool_call, output, is_error)."""
-                tool_obj = _find_tool(tools, tc.name or "")
-                if tool_obj and tool_obj.execute:
-                    try:
-                        args = tc.arguments
-                        if isinstance(args, str):
-                            try:
-                                args = json.loads(args)
-                            except json.JSONDecodeError as exc:
-                                return tc, f"ToolArgError: failed to parse JSON: {exc}", True
-                        if not isinstance(args, dict):
-                            kind = type(args).__name__
-                            return (
-                                tc,
-                                f"ToolArgError: arguments must be a JSON object, got {kind}",
-                                True,
-                            )
-                        validation_error = _validate_tool_args(tool_obj, args)
-                        if validation_error:
-                            return tc, validation_error, True
-                        raw = await tool_obj.execute(**args)
-                        output = str(raw) if not isinstance(raw, str) else raw
-                        return tc, output, False
-                    except Exception as exc:  # noqa: BLE001
-                        return tc, f"{type(exc).__name__}: {exc}", True
-                else:
-                    return tc, f"Unknown tool: {tc.name}", True
-
             if len(response.tool_calls) == 1:
                 exec_results: list[tuple[ContentPart, str, bool]] = [
-                    await _exec_one(response.tool_calls[0])
+                    await _exec_one_st(response.tool_calls[0])
                 ]
             else:
                 gathered = await asyncio.gather(
-                    *(_exec_one(tc) for tc in response.tool_calls),
+                    *(_exec_one_st(tc_part) for tc_part in response.tool_calls),
                     return_exceptions=True,
                 )
                 exec_results = []
@@ -447,17 +521,17 @@ async def stream_with_tools(
                     if isinstance(r, asyncio.CancelledError):
                         raise r
                     if isinstance(r, BaseException):
-                        tc = response.tool_calls[i]
-                        exec_results.append((tc, f"{type(r).__name__}: {r}", True))
+                        tc_part = response.tool_calls[i]
+                        exec_results.append((tc_part, f"{type(r).__name__}: {r}", True))
                     else:
                         exec_results.append(r)
 
             # Append tool results to history for next round
-            for tc, output, is_error in exec_results:
+            for tc_part, output, is_error in exec_results:
                 history.append(
                     Message.tool_result(
-                        tc.tool_call_id or "",
-                        tc.name or "",
+                        tc_part.tool_call_id or "",
+                        tc_part.name or "",
                         output,
                         is_error=is_error,
                     )
@@ -477,13 +551,12 @@ async def generate_object(
     system: str | None = None,
     temperature: float | None = None,
     provider: str | None = None,
-) -> dict[str, Any]:
-    """Generate structured JSON output.
+) -> GenerateObjectResult:
+    """Generate structured JSON output. Spec §8.4.7.
 
     Instructs the model to respond with JSON matching the given schema.
-    For OpenAI and Gemini, uses native response_format for structured output
-    (§8.4.7).  For Anthropic and unknown providers, falls back to prompt
-    injection.
+    For OpenAI and Gemini, uses native response_format for structured output.
+    For Anthropic and unknown providers, falls back to prompt injection.
 
     Args:
         client: The LLM client.
@@ -495,7 +568,8 @@ async def generate_object(
         provider: Optional provider override.
 
     Returns:
-        Parsed JSON object.
+        GenerateObjectResult with text (raw JSON), steps, usage, and
+        parsed_object (the parsed dict).
 
     Raises:
         NoObjectGeneratedError: If the response is not valid JSON.
@@ -554,13 +628,20 @@ async def generate_object(
         text = "\n".join(lines).strip()
 
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as e:
         from attractor_llm.errors import NoObjectGeneratedError
 
         raise NoObjectGeneratedError(
             f"Response is not valid JSON: {e}\nResponse was: {text[:500]}"
         ) from e
+
+    return GenerateObjectResult(
+        text=text,
+        steps=[StepResult(response=response)],
+        total_usage=response.usage,
+        parsed_object=parsed,
+    )
 
 
 def _find_tool(tools: list[Tool], name: str) -> Tool | None:

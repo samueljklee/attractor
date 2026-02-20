@@ -114,7 +114,12 @@ class TestFollowUpEventsAndSteering:
     """follow_up() must emit USER_INPUT and call _drain_steering per §2.5."""
 
     async def test_follow_up_emits_user_input(self):
-        """Each follow-up message triggers a USER_INPUT event (not TURN_START)."""
+        """Both the initial submit and each follow-up emit USER_INPUT events.
+
+        Per §9.10.1, USER_INPUT is now emitted at the start of every
+        submit() call (not just for follow-ups). With one initial submit and
+        one follow-up there should be 2 USER_INPUT events total.
+        """
         events: list[SessionEvent] = []
 
         responses = [
@@ -127,14 +132,17 @@ class TestFollowUpEventsAndSteering:
 
         await session.submit("initial prompt")
 
-        # Initial submit emits TURN_START; follow-up emits USER_INPUT
+        # Initial submit emits exactly one TURN_START
         turn_starts = [e for e in events if e.kind == EventKind.TURN_START]
         assert len(turn_starts) == 1
 
+        # USER_INPUT is now emitted for both the initial submit AND the follow-up
         user_inputs = [e for e in events if e.kind == EventKind.USER_INPUT]
-        assert len(user_inputs) == 1
-        # USER_INPUT carries full content (no truncation) under "content" key
-        assert user_inputs[0].data["content"] == "check the output"
+        assert len(user_inputs) == 2
+        # First USER_INPUT = initial prompt
+        assert user_inputs[0].data["content"] == "initial prompt"
+        # Second USER_INPUT = follow-up content
+        assert user_inputs[1].data["content"] == "check the output"
 
     async def test_follow_up_increments_turn_count(self):
         """Each follow-up increments the turn counter."""
@@ -197,7 +205,11 @@ class TestFollowUpEventsAndSteering:
         assert "my follow-up" in user_texts
 
     async def test_multiple_follow_ups_each_emit_user_input(self):
-        """Multiple follow-ups each get their own USER_INPUT event."""
+        """Initial submit plus every follow-up each emit their own USER_INPUT event.
+
+        Per §9.10.1, USER_INPUT is emitted at the start of every submit() call.
+        With one initial submit and two follow-ups there are 3 USER_INPUT events.
+        """
         events: list[SessionEvent] = []
 
         responses = [
@@ -216,9 +228,12 @@ class TestFollowUpEventsAndSteering:
         turn_starts = [e for e in events if e.kind == EventKind.TURN_START]
         assert len(turn_starts) == 1
 
-        # Each follow-up emits USER_INPUT
+        # Initial submit + each follow-up all emit USER_INPUT (3 total)
         user_inputs = [e for e in events if e.kind == EventKind.USER_INPUT]
-        assert len(user_inputs) == 2
+        assert len(user_inputs) == 3
+        assert user_inputs[0].data["content"] == "start"
+        assert user_inputs[1].data["content"] == "first"
+        assert user_inputs[2].data["content"] == "second"
 
 
 # ================================================================== #

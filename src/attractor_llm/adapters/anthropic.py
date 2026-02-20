@@ -390,9 +390,18 @@ class AnthropicAdapter:
 
         # Parse usage
         usage_data = data.get("usage", {})
+        # Spec §8.9.29: populate reasoning_tokens from thinking content blocks.
+        # Anthropic doesn't expose a separate thinking-token count in usage, so
+        # we approximate by summing thinking block text lengths (÷ 4 chars/token).
+        reasoning_tokens = 0
+        for block in data.get("content", []):
+            if block.get("type") == "thinking":
+                thinking_text = block.get("thinking", "")
+                reasoning_tokens += max(1, len(thinking_text) // 4)
         usage = Usage(
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
+            reasoning_tokens=reasoning_tokens,
             cache_read_tokens=usage_data.get("cache_read_input_tokens", 0),
             cache_write_tokens=usage_data.get("cache_creation_input_tokens", 0),
         )

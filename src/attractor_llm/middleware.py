@@ -293,21 +293,47 @@ class MiddlewareClient:
 
         return resp
 
-    async def stream(self, request: Request) -> Any:
-        """Stream passes through to the underlying client without middleware.
+    async def stream(self, request: Request, **kwargs: Any) -> Any:
+        """Stream with lightweight middleware visibility. Spec §8.1.6.
 
-        DESIGN GAP (§8.1.6): Middleware is NOT applied on the streaming path.
-        Wrapping an async generator with before_request / after_response hooks
-        is non-trivial:
-          - before_request can run eagerly before the generator starts (easy).
-          - after_response needs a fully-accumulated Response, which means the
-            caller would have to consume the entire stream first -- negating the
-            value of streaming.
-        A proper solution would require a streaming-aware middleware protocol
-        (e.g., per-event hooks or an on_stream_complete callback). That design
-        work is deferred; for now streaming bypasses all middleware.
+        Runs before_request for all middleware that has it, then yields events
+        from the underlying stream.  After the stream is fully consumed, calls
+        ``middleware.on_stream_complete(request, response)`` on any middleware
+        object that exposes that method, giving it visibility into the completed
+        streaming response without negating the value of streaming.
+
+        Note: after_response is NOT called (the stream is not accumulated
+        eagerly), so middleware relying purely on after_response won't see
+        streaming calls.  Implement ``on_stream_complete`` for streaming support.
         """
-        return await self._client.stream(request)
+        from attractor_llm.streaming import StreamAccumulator
+
+        # Run before_request for middleware that supports it
+        req = request
+        for mw in self._middleware:
+            if hasattr(mw, "before_request"):
+                req = await mw.before_request(req)
+
+        raw_stream = await self._client.stream(req, **kwargs)
+        middleware_list = self._middleware  # capture for closure
+
+        async def _wrapped_stream() -> Any:
+            acc = StreamAccumulator()
+            async for event in raw_stream:
+                acc.feed(event)
+                yield event
+            # Stream fully consumed -- notify on_stream_complete handlers
+            response = acc.response()
+            for mw in middleware_list:
+                if hasattr(mw, "on_stream_complete"):
+                    try:
+                        result = mw.on_stream_complete(req, response)
+                        if hasattr(result, "__await__"):
+                            await result
+                    except Exception:  # noqa: BLE001
+                        pass  # don't let middleware errors break the stream
+
+        return _wrapped_stream()
 
     def register_adapter(self, name: str, adapter: Any) -> None:
         self._client.register_adapter(name, adapter)

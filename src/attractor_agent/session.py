@@ -268,6 +268,20 @@ class Session:
         """Access the tool registry to add/remove tools."""
         return self._tool_registry
 
+    def register_process(self, proc: asyncio.subprocess.Process) -> None:
+        """Register an OS subprocess for cleanup on abort. Spec §9.1.6.
+
+        The process will be sent SIGTERM (then SIGKILL after 2 s) when the
+        session is aborted.  Tools that spawn subprocesses can call this to
+        ensure cleanup without requiring direct access to the shutdown sequence.
+
+        Usage::
+
+            proc = await asyncio.create_subprocess_shell(...)
+            session.register_process(proc)
+        """
+        self._tracked_processes.append(proc)
+
     @property
     def reasoning_effort(self) -> str | None:
         """Current reasoning_effort setting. Spec §2.7."""
@@ -330,6 +344,14 @@ class Session:
             SessionEvent(
                 kind=EventKind.TURN_START,
                 data={"turn": self._turn_count, "prompt": prompt[:200]},
+            )
+        )
+
+        # Spec §9.10.1: emit USER_INPUT at the start of every submit() call.
+        await self._emitter.emit(
+            SessionEvent(
+                kind=EventKind.USER_INPUT,
+                data={"turn": self._turn_count, "content": prompt},
             )
         )
 
@@ -470,12 +492,24 @@ class Session:
                 # Execute all tool calls
                 results = await self._tool_registry.execute_tool_calls(tool_calls)
 
-                # Add tool results to history
+                # Add tool results to history and emit TOOL_CALL_OUTPUT_DELTA (§9.10.1)
                 for result in results:
                     self._history.append(
                         Message(
                             role=Role.TOOL,
                             content=[result],
+                        )
+                    )
+                    # Single emission per tool result (tools don't stream)
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.TOOL_CALL_OUTPUT_DELTA,
+                            data={
+                                "tool_call_id": result.tool_call_id or "",
+                                "name": result.name or "",
+                                "output": (result.output or "")[:500],
+                                "is_error": result.is_error,
+                            },
                         )
                     )
 
