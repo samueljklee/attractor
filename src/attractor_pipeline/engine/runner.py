@@ -779,6 +779,7 @@ async def run_pipeline(
         completed_nodes.append(current_node.id)
 
         # Handle retry on failure
+        stage_permanently_failed = False
         if result.status in (Outcome.FAIL, Outcome.RETRY):
             if retry_count < max_retries:
                 node_retry_counts[current_node.id] = retry_count + 1
@@ -795,6 +796,7 @@ async def run_pipeline(
                 await anyio.sleep(delay)
                 continue  # retry same node
             # Max retries exhausted
+            stage_permanently_failed = True
             emitter.emit(
                 StageFailed(
                     name=current_node.id,
@@ -804,15 +806,16 @@ async def run_pipeline(
                 )
             )
 
-        # Emit StageCompleted (Spec §9.6)
-        stage_duration = time.monotonic() - stage_start_time
-        emitter.emit(
-            StageCompleted(
-                name=current_node.id,
-                index=node_index - 1,
-                duration=stage_duration,
+        # Emit StageCompleted (Spec §9.6) -- mutually exclusive with StageFailed
+        if not stage_permanently_failed:
+            stage_duration = time.monotonic() - stage_start_time
+            emitter.emit(
+                StageCompleted(
+                    name=current_node.id,
+                    index=node_index - 1,
+                    duration=stage_duration,
+                )
             )
-        )
 
         # Track final node outcome for aggregate goal gate check (Spec §3.4)
         node_outcomes[current_node.id] = result.status

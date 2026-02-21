@@ -345,3 +345,58 @@ class TestRunnerEventEmission:
         assert len(ckpt_events) >= 1
         node_ids = [e.node_id for e in ckpt_events]
         assert "task" in node_ids
+
+    @pytest.mark.asyncio
+    async def test_stage_failed_and_completed_are_mutually_exclusive(self):
+        """StageFailed(will_retry=False) and StageCompleted are mutually exclusive (Spec 9.6).
+
+        When a node exhausts retries, only StageFailed should be emitted --
+        StageCompleted must NOT follow for that node.
+        """
+        from attractor_pipeline.engine.runner import HandlerResult, Outcome
+
+        class AlwaysFailHandler:
+            """Handler that always returns FAIL."""
+
+            async def execute(self, node, context, graph, logs_root, abort_signal=None):
+                return HandlerResult(
+                    status=Outcome.FAIL,
+                    failure_reason="intentional failure",
+                )
+
+        g = parse_dot("""
+        digraph MutEx {
+            graph [goal="Mutual exclusivity test"]
+            start     [shape=Mdiamond]
+            fail_node [shape=hexagon, child_graph="dummy.dot", max_retries=0]
+            done      [shape=Msquare]
+            start -> fail_node -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+        # Override manager handler so hexagon node always fails
+        registry.register("manager", AlwaysFailHandler())
+
+        events: list = []
+        await run_pipeline(g, registry, on_event=events.append)
+
+        # StageFailed with will_retry=False must be emitted for fail_node
+        fail_events = [
+            e
+            for e in events
+            if isinstance(e, StageFailed) and e.name == "fail_node" and not e.will_retry
+        ]
+        assert len(fail_events) == 1, (
+            f"Expected exactly 1 StageFailed(will_retry=False) for fail_node, "
+            f"got {len(fail_events)}"
+        )
+
+        # StageCompleted must NOT be emitted for the permanently-failed node
+        completed_events = [
+            e for e in events if isinstance(e, StageCompleted) and e.name == "fail_node"
+        ]
+        assert len(completed_events) == 0, (
+            f"StageCompleted should not be emitted for a permanently-failed node, "
+            f"but got {len(completed_events)}: {completed_events}"
+        )
