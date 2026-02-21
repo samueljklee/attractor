@@ -20,6 +20,8 @@ from __future__ import annotations
 import copy
 import json
 import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -30,6 +32,18 @@ import anyio
 from attractor_agent.abort import AbortSignal
 from attractor_llm.retry import RetryPolicy
 from attractor_pipeline.conditions import evaluate_condition
+from attractor_pipeline.engine.events import (
+    CheckpointSaved,
+    EventEmitter,
+    PipelineCompleted,
+    PipelineEvent,
+    PipelineFailed,
+    PipelineStarted,
+    StageCompleted,
+    StageFailed,
+    StageRetrying,
+    StageStarted,
+)
 from attractor_pipeline.graph import Edge, Graph, Node
 from attractor_pipeline.stylesheet import apply_stylesheet
 
@@ -549,6 +563,7 @@ async def run_pipeline(
     logs_root: Path | None = None,
     checkpoint: Checkpoint | None = None,
     transforms: list[Any] | None = None,
+    on_event: Callable[[PipelineEvent], None] | None = None,
 ) -> PipelineResult:
     """Execute a pipeline graph. Spec §3.2.
 
@@ -588,6 +603,32 @@ async def run_pipeline(
     ctx = pipeline_context._data  # noqa: SLF001  -- internal access by design
     start_time = time.monotonic()
 
+    # Event emitter (Spec §9.6)
+    emitter = EventEmitter(on_event=on_event)
+    pipeline_id = str(uuid.uuid4())[:8]
+    node_index = 0
+
+    def _emit_terminal(pr: PipelineResult) -> PipelineResult:
+        """Emit the terminal pipeline event and close the emitter."""
+        if pr.status == PipelineStatus.COMPLETED:
+            emitter.emit(
+                PipelineCompleted(
+                    duration=pr.duration_seconds,
+                    artifact_count=len(
+                        [k for k in ctx if k.startswith("codergen.") and k.endswith(".output")]
+                    ),
+                )
+            )
+        else:
+            emitter.emit(
+                PipelineFailed(
+                    error=pr.error or str(pr.status),
+                    duration=pr.duration_seconds,
+                )
+            )
+        emitter.close()
+        return pr
+
     # Apply graph transforms before validation (Spec §9, §11.11)
     if transforms:
         from attractor_pipeline.transforms import apply_transforms
@@ -620,6 +661,9 @@ async def run_pipeline(
         preamble = generate_resume_preamble(graph, checkpoint)
         ctx["_resume_preamble"] = preamble
 
+    # Emit PipelineStarted (Spec §9.6) before any early returns
+    emitter.emit(PipelineStarted(name=graph.name, id=pipeline_id))
+
     # Find start node
     if checkpoint and checkpoint.current_node_id:
         current_node = graph.get_node(checkpoint.current_node_id)
@@ -627,10 +671,12 @@ async def run_pipeline(
         current_node = graph.get_start_node()
 
     if current_node is None:
-        return PipelineResult(
-            status=PipelineStatus.FAILED,
-            error="No start node found in graph",
-            duration_seconds=time.monotonic() - start_time,
+        return _emit_terminal(
+            PipelineResult(
+                status=PipelineStatus.FAILED,
+                error="No start node found in graph",
+                duration_seconds=time.monotonic() - start_time,
+            )
         )
 
     # Global iteration cap: prevents infinite loops in cyclic graphs.
@@ -642,15 +688,17 @@ async def run_pipeline(
     while True:
         total_steps += 1
         if total_steps > max_total_steps:
-            return PipelineResult(
-                status=PipelineStatus.FAILED,
-                error=(
-                    f"Pipeline exceeded max total steps ({max_total_steps}). "
-                    f"Possible infinite loop in graph."
-                ),
-                context=ctx,
-                completed_nodes=completed_nodes,
-                duration_seconds=time.monotonic() - start_time,
+            return _emit_terminal(
+                PipelineResult(
+                    status=PipelineStatus.FAILED,
+                    error=(
+                        f"Pipeline exceeded max total steps ({max_total_steps}). "
+                        f"Possible infinite loop in graph."
+                    ),
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    duration_seconds=time.monotonic() - start_time,
+                )
             )
 
         # Check abort
@@ -668,11 +716,13 @@ async def run_pipeline(
                 )
                 ckpt.save(logs_root / "checkpoint.json")
 
-            return PipelineResult(
-                status=PipelineStatus.CANCELLED,
-                context=ctx,
-                completed_nodes=completed_nodes,
-                duration_seconds=time.monotonic() - start_time,
+            return _emit_terminal(
+                PipelineResult(
+                    status=PipelineStatus.CANCELLED,
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    duration_seconds=time.monotonic() - start_time,
+                )
             )
 
         # Resolve handler for current node
@@ -680,12 +730,14 @@ async def run_pipeline(
         handler = handlers.get(handler_name)
 
         if handler is None:
-            return PipelineResult(
-                status=PipelineStatus.FAILED,
-                error=f"No handler for '{handler_name}' (node: {current_node.id})",
-                context=ctx,
-                completed_nodes=completed_nodes,
-                duration_seconds=time.monotonic() - start_time,
+            return _emit_terminal(
+                PipelineResult(
+                    status=PipelineStatus.FAILED,
+                    error=f"No handler for '{handler_name}' (node: {current_node.id})",
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    duration_seconds=time.monotonic() - start_time,
+                )
             )
 
         # Execute with retry (Spec §3.5)
@@ -694,6 +746,11 @@ async def run_pipeline(
         )
         retry_count = node_retry_counts.get(current_node.id, 0)
 
+        stage_start_time = time.monotonic()
+        emitter.emit(StageStarted(name=current_node.id, index=node_index))
+        node_index += 1
+
+        ctx["_event_emitter"] = emitter
         try:
             result = await handler.execute(
                 current_node,
@@ -707,6 +764,8 @@ async def run_pipeline(
                 status=Outcome.FAIL,
                 failure_reason=f"{type(exc).__name__}: {exc}",
             )
+        finally:
+            ctx.pop("_event_emitter", None)
 
         # Apply context updates from handler
         ctx.update(result.context_updates)
@@ -725,9 +784,35 @@ async def run_pipeline(
                 node_retry_counts[current_node.id] = retry_count + 1
                 # Exponential backoff with jitter (Spec §3.6)
                 delay = _get_retry_policy(current_node).compute_delay(retry_count)
+                emitter.emit(
+                    StageRetrying(
+                        name=current_node.id,
+                        index=node_index - 1,
+                        attempt=retry_count + 1,
+                        delay=delay,
+                    )
+                )
                 await anyio.sleep(delay)
                 continue  # retry same node
-            # Max retries exhausted -- fall through to edge selection
+            # Max retries exhausted
+            emitter.emit(
+                StageFailed(
+                    name=current_node.id,
+                    index=node_index - 1,
+                    error=result.failure_reason,
+                    will_retry=False,
+                )
+            )
+
+        # Emit StageCompleted (Spec §9.6)
+        stage_duration = time.monotonic() - stage_start_time
+        emitter.emit(
+            StageCompleted(
+                name=current_node.id,
+                index=node_index - 1,
+                duration=stage_duration,
+            )
+        )
 
         # Track final node outcome for aggregate goal gate check (Spec §3.4)
         node_outcomes[current_node.id] = result.status
@@ -748,6 +833,7 @@ async def run_pipeline(
                 status="running",
             )
             ckpt.save(logs_root / "checkpoint.json")
+            emitter.emit(CheckpointSaved(node_id=current_node.id))
 
         # Check goal gate on ANY node with goal_gate set (Spec §3.4)
         # Exit nodes handle their own goal gate below.
@@ -762,7 +848,7 @@ async def run_pipeline(
                 completed_nodes,
             )
             if action == "fail":
-                return payload  # type: ignore[return-value]
+                return _emit_terminal(payload)  # type: ignore[arg-type]
             if action == "redirect":
                 current_node = payload  # type: ignore[assignment]
                 continue
@@ -783,18 +869,20 @@ async def run_pipeline(
                 start_time,
             )
             if agg_action == "fail":
-                return agg_payload  # type: ignore[return-value]
+                return _emit_terminal(agg_payload)  # type: ignore[arg-type]
             if agg_action == "redirect":
                 current_node = agg_payload  # type: ignore[assignment]
                 continue
             if agg_action == "no_retry_target":
-                return PipelineResult(
-                    status=PipelineStatus.FAILED,
-                    error="Aggregate goal gate unsatisfied and no retry target",
-                    context=ctx,
-                    completed_nodes=completed_nodes,
-                    final_outcome=result,
-                    duration_seconds=time.monotonic() - start_time,
+                return _emit_terminal(
+                    PipelineResult(
+                        status=PipelineStatus.FAILED,
+                        error="Aggregate goal gate unsatisfied and no retry target",
+                        context=ctx,
+                        completed_nodes=completed_nodes,
+                        final_outcome=result,
+                        duration_seconds=time.monotonic() - start_time,
+                    )
                 )
 
             # Per-exit-node goal gate check (Spec §3.4 + Issue 2 circuit breaker)
@@ -809,54 +897,62 @@ async def run_pipeline(
                     completed_nodes,
                 )
                 if action == "fail":
-                    return payload  # type: ignore[return-value]
+                    return _emit_terminal(payload)  # type: ignore[arg-type]
                 if action == "redirect":
                     current_node = payload  # type: ignore[assignment]
                     continue
                 if action == "no_retry_target":
                     # Exit node with no retry target: pipeline fails
-                    return PipelineResult(
-                        status=PipelineStatus.FAILED,
-                        error="Goal gate unsatisfied and no retry target",
-                        context=ctx,
-                        completed_nodes=completed_nodes,
-                        final_outcome=result,
-                        duration_seconds=time.monotonic() - start_time,
+                    return _emit_terminal(
+                        PipelineResult(
+                            status=PipelineStatus.FAILED,
+                            error="Goal gate unsatisfied and no retry target",
+                            context=ctx,
+                            completed_nodes=completed_nodes,
+                            final_outcome=result,
+                            duration_seconds=time.monotonic() - start_time,
+                        )
                     )
 
             # Goal gate passed (or no gate) -- pipeline complete
             # Reset redirect counter on success
             goal_gate_redirect_count = 0
 
-            return PipelineResult(
-                status=PipelineStatus.COMPLETED,
-                context=ctx,
-                completed_nodes=completed_nodes,
-                final_outcome=result,
-                duration_seconds=time.monotonic() - start_time,
+            return _emit_terminal(
+                PipelineResult(
+                    status=PipelineStatus.COMPLETED,
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    final_outcome=result,
+                    duration_seconds=time.monotonic() - start_time,
+                )
             )
 
         # Select next edge (Spec §3.3)
         next_edge = select_edge(current_node, result, graph, ctx)
         if next_edge is None:
             # Dead end -- no outgoing edges
-            return PipelineResult(
-                status=PipelineStatus.COMPLETED,
-                context=ctx,
-                completed_nodes=completed_nodes,
-                final_outcome=result,
-                duration_seconds=time.monotonic() - start_time,
+            return _emit_terminal(
+                PipelineResult(
+                    status=PipelineStatus.COMPLETED,
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    final_outcome=result,
+                    duration_seconds=time.monotonic() - start_time,
+                )
             )
 
         # Advance to next node
         next_node = graph.get_node(next_edge.target)
         if next_node is None:
-            return PipelineResult(
-                status=PipelineStatus.FAILED,
-                error=f"Edge target node not found: {next_edge.target}",
-                context=ctx,
-                completed_nodes=completed_nodes,
-                duration_seconds=time.monotonic() - start_time,
+            return _emit_terminal(
+                PipelineResult(
+                    status=PipelineStatus.FAILED,
+                    error=f"Edge target node not found: {next_edge.target}",
+                    context=ctx,
+                    completed_nodes=completed_nodes,
+                    duration_seconds=time.monotonic() - start_time,
+                )
             )
 
         current_node = next_node

@@ -6,6 +6,13 @@ import asyncio
 
 import pytest
 
+from attractor_pipeline import (
+    HandlerRegistry,
+    PipelineStatus,
+    parse_dot,
+    register_default_handlers,
+    run_pipeline,
+)
 from attractor_pipeline.engine.events import (
     CheckpointSaved,
     EventEmitter,
@@ -204,3 +211,137 @@ class TestEventEmitter:
 
         assert callback_events == [event]
         assert stream_events == [event]
+
+
+# ------------------------------------------------------------------ #
+# Runner integration tests
+# ------------------------------------------------------------------ #
+
+
+class TestRunnerEventEmission:
+    """run_pipeline emits lifecycle events via on_event callback."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_started_and_completed_events(self):
+        """A successful pipeline emits PipelineStarted and PipelineCompleted."""
+        g = parse_dot("""
+        digraph E {
+            graph [goal="Event test"]
+            start [shape=Mdiamond]
+            done  [shape=Msquare]
+            start -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        result = await run_pipeline(g, registry, on_event=events.append)
+
+        assert result.status == PipelineStatus.COMPLETED
+
+        # First event is PipelineStarted
+        assert isinstance(events[0], PipelineStarted)
+        assert events[0].name == "E"
+
+        # Last event is PipelineCompleted
+        assert isinstance(events[-1], PipelineCompleted)
+        assert events[-1].duration > 0
+
+    @pytest.mark.asyncio
+    async def test_stage_started_and_completed_events(self):
+        """Each node emits StageStarted and StageCompleted."""
+        g = parse_dot("""
+        digraph S {
+            graph [goal="Stage test"]
+            start [shape=Mdiamond]
+            task  [shape=box, prompt="Do it"]
+            done  [shape=Msquare]
+            start -> task -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        await run_pipeline(g, registry, on_event=events.append)
+
+        stage_started = [e for e in events if isinstance(e, StageStarted)]
+        stage_completed = [e for e in events if isinstance(e, StageCompleted)]
+
+        # 3 nodes: start, task, done
+        assert len(stage_started) == 3
+        assert len(stage_completed) == 3
+
+        # Names match node IDs
+        names = [e.name for e in stage_started]
+        assert "start" in names
+        assert "task" in names
+        assert "done" in names
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failed_event_on_no_start(self):
+        """PipelineFailed emitted when pipeline fails."""
+        from attractor_pipeline.graph import Graph
+
+        g = Graph(name="empty")
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        result = await run_pipeline(g, registry, on_event=events.append)
+
+        assert result.status == PipelineStatus.FAILED
+        assert isinstance(events[0], PipelineStarted)
+        failed = [e for e in events if isinstance(e, PipelineFailed)]
+        assert len(failed) == 1
+
+    @pytest.mark.asyncio
+    async def test_on_event_none_is_safe(self):
+        """Passing on_event=None (default) does not error."""
+        g = parse_dot("""
+        digraph Safe {
+            graph [goal="No events"]
+            start [shape=Mdiamond]
+            done  [shape=Msquare]
+            start -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        # Default: no on_event -- must not raise
+        result = await run_pipeline(g, registry)
+        assert result.status == PipelineStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_saved_events(self):
+        """CheckpointSaved event emitted after each node when logs_root is set."""
+        import tempfile
+        from pathlib import Path
+
+        g = parse_dot("""
+        digraph C {
+            graph [goal="Checkpoint test"]
+            start [shape=Mdiamond]
+            task  [shape=box, prompt="Do it"]
+            done  [shape=Msquare]
+            start -> task -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            await run_pipeline(
+                g,
+                registry,
+                on_event=events.append,
+                logs_root=Path(tmp),
+            )
+
+        ckpt_events = [e for e in events if isinstance(e, CheckpointSaved)]
+        assert len(ckpt_events) >= 1
+        node_ids = [e.node_id for e in ckpt_events]
+        assert "task" in node_ids
