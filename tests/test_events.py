@@ -545,3 +545,127 @@ class TestPublicExports:
         # Verify they're the actual classes, not None
         assert PipelineEvent is not None
         assert EventEmitter is not None
+
+
+# ------------------------------------------------------------------ #
+# Full integration tests -- all event types in one pipeline
+# ------------------------------------------------------------------ #
+
+
+class TestFullEventIntegration:
+    """End-to-end test: a complex pipeline emits all major event categories."""
+
+    @pytest.mark.asyncio
+    async def test_complex_pipeline_emits_all_event_categories(self):
+        """Pipeline with human gate + parallel branches emits events from all categories."""
+        g = parse_dot("""
+        digraph Full {
+            graph [goal="Full event test"]
+            start    [shape=Mdiamond]
+            review   [shape=house, label="Approve?"]
+            fork     [shape=component]
+            task_a   [shape=box, prompt="Task A"]
+            task_b   [shape=box, prompt="Task B"]
+            join     [shape=tripleoctagon]
+            done     [shape=Msquare]
+            start -> review
+            review -> fork [label="Approve"]
+            fork -> task_a
+            fork -> task_b
+            task_a -> join
+            task_b -> join
+            join -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        result = await run_pipeline(g, registry, on_event=events.append)
+
+        assert result.status == PipelineStatus.COMPLETED
+
+        # Check all event categories present
+        type_names = {type(e).__name__ for e in events}
+
+        # Pipeline lifecycle
+        assert "PipelineStarted" in type_names
+        assert "PipelineCompleted" in type_names
+
+        # Stage lifecycle
+        assert "StageStarted" in type_names
+        assert "StageCompleted" in type_names
+
+        # Human interaction
+        assert "InterviewStarted" in type_names
+        assert "InterviewCompleted" in type_names
+
+        # Parallel execution
+        assert "ParallelStarted" in type_names
+        assert "ParallelBranchStarted" in type_names
+        assert "ParallelBranchCompleted" in type_names
+        assert "ParallelCompleted" in type_names
+
+    @pytest.mark.asyncio
+    async def test_event_order_is_logical(self):
+        """PipelineStarted is first, PipelineCompleted is last."""
+        g = parse_dot("""
+        digraph Order {
+            graph [goal="Order test"]
+            start [shape=Mdiamond]
+            task  [shape=box, prompt="Work"]
+            done  [shape=Msquare]
+            start -> task -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        await run_pipeline(g, registry, on_event=events.append)
+
+        assert isinstance(events[0], PipelineStarted)
+        assert isinstance(events[-1], PipelineCompleted)
+
+        # StageStarted always comes before its StageCompleted
+        started_indices = {e.name: i for i, e in enumerate(events) if isinstance(e, StageStarted)}
+        completed_indices = {
+            e.name: i for i, e in enumerate(events) if isinstance(e, StageCompleted)
+        }
+        for name in started_indices:
+            if name in completed_indices:
+                assert started_indices[name] < completed_indices[name], (
+                    f"StageStarted('{name}') should come before StageCompleted('{name}')"
+                )
+
+    @pytest.mark.asyncio
+    async def test_async_stream_consumption(self):
+        """Events can be consumed via the async stream pattern."""
+        g = parse_dot("""
+        digraph Stream {
+            graph [goal="Stream test"]
+            start [shape=Mdiamond]
+            done  [shape=Msquare]
+            start -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        emitter = EventEmitter()
+        collected: list = []
+
+        async def consume():
+            async for event in emitter.events():
+                collected.append(event)
+
+        consumer_task = asyncio.create_task(consume())
+
+        await run_pipeline(g, registry, on_event=emitter.emit)
+        emitter.close()
+
+        await asyncio.wait_for(consumer_task, timeout=2.0)
+
+        type_names = {type(e).__name__ for e in collected}
+        assert "PipelineStarted" in type_names
+        assert "PipelineCompleted" in type_names
