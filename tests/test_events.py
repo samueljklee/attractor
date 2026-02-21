@@ -510,3 +510,38 @@ class TestVerboseEventPrinter:
         captured = capsys.readouterr()
         assert "TestPipeline" in captured.out
         assert "abc123" in captured.out
+
+
+# ------------------------------------------------------------------ #
+# Public API export tests
+# ------------------------------------------------------------------ #
+
+
+class TestPublicExports:
+    """Event types are importable from the top-level package."""
+
+    def test_event_types_importable_from_package(self):
+        """All event types can be imported from attractor_pipeline."""
+        from attractor_pipeline import (  # noqa: F401
+            CheckpointSaved,
+            EventEmitter,
+            InterviewCompleted,
+            InterviewStarted,
+            InterviewTimeout,
+            ParallelBranchCompleted,
+            ParallelBranchStarted,
+            ParallelCompleted,
+            ParallelStarted,
+            PipelineCompleted,
+            PipelineEvent,
+            PipelineFailed,
+            PipelineStarted,
+            StageCompleted,
+            StageFailed,
+            StageRetrying,
+            StageStarted,
+        )
+
+        # Verify they're the actual classes, not None
+        assert PipelineEvent is not None
+        assert EventEmitter is not None

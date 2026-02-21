@@ -4,6 +4,25 @@ DOT-based pipeline runner for orchestrating multi-stage AI workflows.
 """
 
 from attractor_pipeline.conditions import evaluate_condition
+from attractor_pipeline.engine.events import (
+    CheckpointSaved,
+    EventEmitter,
+    InterviewCompleted,
+    InterviewStarted,
+    InterviewTimeout,
+    ParallelBranchCompleted,
+    ParallelBranchStarted,
+    ParallelCompleted,
+    ParallelStarted,
+    PipelineCompleted,
+    PipelineEvent,
+    PipelineFailed,
+    PipelineStarted,
+    StageCompleted,
+    StageFailed,
+    StageRetrying,
+    StageStarted,
+)
 from attractor_pipeline.engine.runner import (
     RETRY_PRESETS,
     Checkpoint,
@@ -97,4 +116,22 @@ __all__ = [
     "apply_transforms",
     # Conditions
     "evaluate_condition",
+    # Events (Spec §9.6)
+    "PipelineEvent",
+    "EventEmitter",
+    "PipelineStarted",
+    "PipelineCompleted",
+    "PipelineFailed",
+    "StageStarted",
+    "StageCompleted",
+    "StageFailed",
+    "StageRetrying",
+    "ParallelStarted",
+    "ParallelBranchStarted",
+    "ParallelBranchCompleted",
+    "ParallelCompleted",
+    "InterviewStarted",
+    "InterviewCompleted",
+    "InterviewTimeout",
+    "CheckpointSaved",
 ]
