@@ -439,3 +439,54 @@ class TestHumanHandlerEvents:
 
         assert len(interview_completed) == 1
         assert interview_completed[0].duration >= 0
+
+
+# ------------------------------------------------------------------ #
+# ParallelHandler parallel execution event tests
+# ------------------------------------------------------------------ #
+
+
+class TestParallelHandlerEvents:
+    """ParallelHandler emits parallel execution events."""
+
+    @pytest.mark.asyncio
+    async def test_parallel_emits_events(self):
+        """A pipeline with parallel branches emits all 4 parallel event types."""
+        g = parse_dot("""
+        digraph P {
+            graph [goal="Parallel test"]
+            start    [shape=Mdiamond]
+            fork     [shape=component]
+            branch_a [shape=box, prompt="Task A"]
+            branch_b [shape=box, prompt="Task B"]
+            join     [shape=tripleoctagon]
+            done     [shape=Msquare]
+            start -> fork
+            fork -> branch_a
+            fork -> branch_b
+            branch_a -> join
+            branch_b -> join
+            join -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        events: list = []
+        result = await run_pipeline(g, registry, on_event=events.append)
+
+        assert result.status == PipelineStatus.COMPLETED
+
+        par_started = [e for e in events if isinstance(e, ParallelStarted)]
+        branch_started = [e for e in events if isinstance(e, ParallelBranchStarted)]
+        branch_completed = [e for e in events if isinstance(e, ParallelBranchCompleted)]
+        par_completed = [e for e in events if isinstance(e, ParallelCompleted)]
+
+        assert len(par_started) == 1
+        assert par_started[0].branch_count == 2
+
+        assert len(branch_started) == 2
+        assert len(branch_completed) == 2
+
+        assert len(par_completed) == 1
+        assert par_completed[0].success_count + par_completed[0].failure_count == 2

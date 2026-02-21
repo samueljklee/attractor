@@ -22,6 +22,13 @@ from pathlib import Path
 from typing import Any
 
 from attractor_agent.abort import AbortSignal
+from attractor_pipeline.engine.events import (
+    EventEmitter,
+    ParallelBranchCompleted,
+    ParallelBranchStarted,
+    ParallelCompleted,
+    ParallelStarted,
+)
 from attractor_pipeline.engine.runner import HandlerResult, Outcome
 from attractor_pipeline.engine.subgraph import execute_subgraph
 from attractor_pipeline.graph import Graph, Node
@@ -98,6 +105,9 @@ class ParallelHandler:
                 failure_reason="ParallelHandler has no handler registry",
             )
 
+        # Event emitter (Spec 9.6) -- same pattern as HumanHandler
+        _emitter: EventEmitter | None = context.get("_event_emitter")
+
         outgoing = graph.outgoing_edges(node.id)
         if not outgoing:
             return HandlerResult(
@@ -116,26 +126,33 @@ class ParallelHandler:
         # Each branch gets its own pre-cloned snapshot.
         branch_snapshots: list[dict[str, Any]] = [copy.deepcopy(context) for _ in outgoing]
 
+        if _emitter:
+            _emitter.emit(ParallelStarted(branch_count=len(outgoing)))
+
+        parallel_start = time.monotonic()
+
         # Launch branches
         if max_parallel > 0:
             # Bounded parallelism via semaphore
             sem = asyncio.Semaphore(max_parallel)
 
             async def bounded_branch(
-                edge_target: str, branch_id: str, ctx_snapshot: dict[str, Any]
+                edge_target: str, branch_id: str, index: int, ctx_snapshot: dict[str, Any]
             ) -> BranchResult:
                 async with sem:
                     return await self._run_branch(
                         edge_target,
                         branch_id,
+                        index,
                         ctx_snapshot,
                         graph,
                         logs_root,
                         abort_signal,
+                        _emitter,
                     )
 
             tasks = [
-                bounded_branch(edge.target, f"branch_{i}", branch_snapshots[i])
+                bounded_branch(edge.target, f"branch_{i}", i, branch_snapshots[i])
                 for i, edge in enumerate(outgoing)
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -145,10 +162,12 @@ class ParallelHandler:
                 self._run_branch(
                     edge.target,
                     f"branch_{i}",
+                    i,
                     branch_snapshots[i],
                     graph,
                     logs_root,
                     abort_signal,
+                    _emitter,
                 )
                 for i, edge in enumerate(outgoing)
             ]
@@ -197,6 +216,15 @@ class ParallelHandler:
         successes = [br for br in branch_results if br.result.status == Outcome.SUCCESS]
         failures = [br for br in branch_results if br.result.status == Outcome.FAIL]
 
+        if _emitter:
+            _emitter.emit(
+                ParallelCompleted(
+                    duration=time.monotonic() - parallel_start,
+                    success_count=len(successes),
+                    failure_count=len(failures),
+                )
+            )
+
         if join_policy == JoinPolicy.FIRST_SUCCESS and successes:
             best = successes[0]
             return HandlerResult(
@@ -239,10 +267,12 @@ class ParallelHandler:
         self,
         target_node_id: str,
         branch_id: str,
+        index: int,
         parent_context: dict[str, Any],
         graph: Graph,
         logs_root: Path | None,
         abort_signal: AbortSignal | None,
+        emitter: EventEmitter | None = None,
     ) -> BranchResult:
         """Run a single parallel branch."""
         target_node = graph.get_node(target_node_id)
@@ -256,6 +286,9 @@ class ParallelHandler:
                 ),
                 error=f"Node not found: {target_node_id}",
             )
+
+        if emitter:
+            emitter.emit(ParallelBranchStarted(branch=branch_id, index=index))
 
         # Deep-clone context for isolation -- prevents concurrent
         # branches from sharing mutable nested structures (lists, dicts)
@@ -285,12 +318,25 @@ class ParallelHandler:
                 failure_reason=f"{type(exc).__name__}: {exc}",
             )
 
+        duration = time.monotonic() - start_time
+        success = result.status == Outcome.SUCCESS
+
+        if emitter:
+            emitter.emit(
+                ParallelBranchCompleted(
+                    branch=branch_id,
+                    index=index,
+                    duration=duration,
+                    success=success,
+                )
+            )
+
         return BranchResult(
             branch_id=branch_id,
             target_node_id=target_node_id,
             result=result,
             context=branch_context,
-            completed_at=time.monotonic() - start_time,
+            completed_at=duration,
         )
 
 
