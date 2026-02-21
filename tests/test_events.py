@@ -490,3 +490,23 @@ class TestParallelHandlerEvents:
 
         assert len(par_completed) == 1
         assert par_completed[0].success_count + par_completed[0].failure_count == 2
+
+
+# ------------------------------------------------------------------ #
+# CLI --verbose event printer tests
+# ------------------------------------------------------------------ #
+
+
+class TestVerboseEventPrinter:
+    """The verbose console printer formats events for human consumption."""
+
+    def test_console_printer_formats_event(self, capsys):
+        """_console_event_printer writes event description to stdout."""
+        from attractor_pipeline.cli import _console_event_printer
+
+        event = PipelineStarted(name="TestPipeline", id="abc123")
+        _console_event_printer(event)
+
+        captured = capsys.readouterr()
+        assert "TestPipeline" in captured.out
+        assert "abc123" in captured.out

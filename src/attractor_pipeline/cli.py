@@ -21,6 +21,12 @@ from typing import Any
 from attractor_pipeline.validation import Severity, validate
 
 
+def _console_event_printer(event: Any) -> None:
+    """Print pipeline events to stdout for --verbose mode."""
+    description = getattr(event, "description", str(event))
+    print(f"  [event] {description}")
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -70,6 +76,12 @@ def main() -> None:
         type=str,
         default="python:3.12-slim",
         help="Docker image to use (default: python:3.12-slim)",
+    )
+    run_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show real-time pipeline events during execution",
     )
 
     # --- validate command ---
@@ -271,11 +283,14 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     print("-" * 40)
     start_time = time.monotonic()
 
+    on_event = _console_event_printer if getattr(args, "verbose", False) else None
+
     async with client:
         result = await run_pipeline(
             graph,
             registry,
             logs_root=logs_root,
+            on_event=on_event,
         )
 
     duration = time.monotonic() - start_time
