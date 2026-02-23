@@ -520,3 +520,76 @@ class TestMultiFileEditGemini:
         _assert_multi_file_edit(workspace)
 
 
+# ================================================================== #
+# Task 18: Grep + Glob — §9.12.16-18
+# ================================================================== #
+
+
+def _seed_grep_glob(workspace: Path) -> None:
+    """Seed files for grep/glob tests."""
+    (workspace / "alpha.py").write_text('SECRET_TOKEN = "abc123"\n')
+    (workspace / "beta.py").write_text('SECRET_TOKEN = "def456"\nOTHER = 1\n')
+    (workspace / "gamma.txt").write_text("not python\n")
+
+
+async def _run_grep_glob(workspace: Path, client: Any, model: str, provider: str) -> str:
+    _seed_grep_glob(workspace)
+    profile, tools = _get_profile_and_tools(provider)
+    config = SessionConfig(model=model, provider=provider, max_turns=5)
+    config = profile.apply_to_config(config)
+    async with client:
+        session = Session(client=client, config=config, tools=tools)
+        result = await session.submit(
+            f"In directory {workspace}: "
+            f"(1) Use glob to find all .py files. "
+            f"(2) Use grep to find which .py files contain 'SECRET_TOKEN'. "
+            f"Tell me the filenames that contain SECRET_TOKEN."
+        )
+    return result
+
+
+class TestGrepGlobAnthropic:
+    """§9.12.16: Anthropic grep and glob search."""
+
+    @skip_no_anthropic
+    @pytest.mark.asyncio
+    async def test_grep_and_glob(self, workspace, anthropic_client):
+        result = await _run_grep_glob(workspace, anthropic_client, ANTHROPIC_MODEL, "anthropic")
+        assert "alpha" in result.lower() or "alpha.py" in result, (
+            f"Expected alpha.py in result. Got:\n{result[:300]}"
+        )
+        assert "beta" in result.lower() or "beta.py" in result, (
+            f"Expected beta.py in result. Got:\n{result[:300]}"
+        )
+
+
+class TestGrepGlobOpenAI:
+    """§9.12.17: OpenAI grep and glob search."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_grep_and_glob(self, workspace, openai_client):
+        result = await _run_grep_glob(workspace, openai_client, OPENAI_MODEL, "openai")
+        assert "alpha" in result.lower() or "alpha.py" in result, (
+            f"Expected alpha.py in result. Got:\n{result[:300]}"
+        )
+        assert "beta" in result.lower() or "beta.py" in result, (
+            f"Expected beta.py in result. Got:\n{result[:300]}"
+        )
+
+
+class TestGrepGlobGemini:
+    """§9.12.18: Gemini grep and glob search."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_grep_and_glob(self, workspace, gemini_client):
+        result = await _run_grep_glob(workspace, gemini_client, GEMINI_MODEL, "gemini")
+        assert "alpha" in result.lower() or "alpha.py" in result, (
+            f"Expected alpha.py in result. Got:\n{result[:300]}"
+        )
+        assert "beta" in result.lower() or "beta.py" in result, (
+            f"Expected beta.py in result. Got:\n{result[:300]}"
+        )
+
+
