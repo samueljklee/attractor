@@ -565,7 +565,13 @@ class TestValidationPromptOnLlmNodes:
         assert len(r13_diags) == 0
 
     def test_box_node_with_label_no_warning(self):
-        """An LLM node with a label (but no prompt) should NOT trigger a warning."""
+        """Spec §11.2.7: A box node with label but NO prompt must still produce a WARNING.
+
+        Label does not substitute for prompt. The spec says WARNING whenever
+        prompt is absent on a box node.
+
+        NOTE: This test was previously incorrect (asserted no warning). Fixed per §11.2.7.
+        """
         graph = Graph(name="test")
         graph.nodes["start"] = Node(id="start", shape="Mdiamond")
         graph.nodes["work"] = Node(id="work", shape="box", label="Code Review")
@@ -576,7 +582,11 @@ class TestValidationPromptOnLlmNodes:
 
         diagnostics = validate(graph)
         r13_diags = [d for d in diagnostics if d.rule == "R13"]
-        assert len(r13_diags) == 0
+        # §11.2.7: WARNING must fire when prompt is absent, even if label is present.
+        assert len(r13_diags) == 1, (
+            "R13 WARNING must fire for box nodes without prompt, even when label is present"
+        )
+        assert r13_diags[0].severity == Severity.WARNING
 
     def test_non_box_node_without_prompt_no_warning(self):
         """Non-box shapes (diamond, etc.) don't require prompts."""

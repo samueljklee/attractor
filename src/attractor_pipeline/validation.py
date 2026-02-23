@@ -347,17 +347,20 @@ def _rule_has_goal(graph: Graph) -> list[Diagnostic]:
 
 
 def _rule_prompt_on_llm_nodes(graph: Graph) -> list[Diagnostic]:
-    """R13: LLM task nodes (shape=box) should have a prompt or label."""
+    """R13: LLM task nodes (shape=box) must have a prompt (§11.2.7)."""
     results: list[Diagnostic] = []
     for node in graph.nodes.values():
-        if node.shape == "box" and not node.prompt and not node.label:
+        # §11.2.7: WARNING fires whenever prompt is absent on a box node.
+        # label does NOT substitute for prompt.
+        if node.shape == "box" and not node.prompt:
             results.append(
                 Diagnostic(
                     rule="R13",
                     severity=Severity.WARNING,
                     message=(
-                        f"LLM node '{node.id}' has no 'prompt' or 'label' attribute. "
-                        f"Consider adding one so the handler knows what to do."
+                        f"LLM node '{node.id}' has no 'prompt' attribute. "
+                        f"Add a 'prompt' so the handler knows what to do "
+                        f"(note: 'label' does not substitute for 'prompt')."
                     ),
                     node_id=node.id,
                 )
