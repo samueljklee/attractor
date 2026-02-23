@@ -622,3 +622,44 @@ class TestHttpServer:
         status_resp = client.get(f"/status/{run_id}")
         assert status_resp.json()["status"] == "completed"
         assert len(pipeline_called) == 0, "run_pipeline must NOT be called when pipeline is null"
+
+
+class TestInterviewerAnswer:
+    """Task 7 — §11.8.1: Interviewer.ask() contract and Answer bridge.
+
+    NOTE: The Interviewer protocol intentionally returns str (minimum contract).
+    Concrete implementations expose ask_question() -> Answer via ask_question_via_ask().
+    This is documented in human.py:117-123.
+    """
+
+    @pytest.mark.asyncio
+    async def test_queue_interviewer_ask_returns_str(self):
+        """QueueInterviewer.ask() must return str (minimum protocol contract)."""
+        from attractor_pipeline.handlers.human import QueueInterviewer
+
+        interviewer = QueueInterviewer(["yes"])
+        result = await interviewer.ask("Are you sure?")
+        assert isinstance(result, str), f"ask() must return str, got {type(result)}"
+        assert result == "yes"
+
+    @pytest.mark.asyncio
+    async def test_queue_interviewer_ask_question_returns_answer(self):
+        """QueueInterviewer.ask_question() must return Answer (rich API)."""
+        from attractor_pipeline.handlers.human import Answer, Question, QueueInterviewer
+
+        interviewer = QueueInterviewer(["yes"])
+        question = Question(text="Are you sure?")
+        answer = await interviewer.ask_question(question)
+        assert isinstance(answer, Answer), f"ask_question() must return Answer, got {type(answer)}"
+        assert answer.value == "yes"
+
+    @pytest.mark.asyncio
+    async def test_auto_approve_interviewer_returns_str(self):
+        """AutoApproveInterviewer.ask() must return str."""
+        from attractor_pipeline.handlers.human import AutoApproveInterviewer
+
+        interviewer = AutoApproveInterviewer()
+        result = await interviewer.ask("Approve?")
+        assert isinstance(result, str), (
+            f"AutoApproveInterviewer.ask() must return str, got {type(result)}"
+        )
