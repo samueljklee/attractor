@@ -215,3 +215,50 @@ class TestGeminiReadAndEdit:
         assert "DB_HOST" in content
 
 
+# ================================================================== #
+# Task 13: Shell execution — §9.12.13-15 (OpenAI + Gemini)
+# ================================================================== #
+
+
+class TestOpenAIShellExecution:
+    """§9.12.13: OpenAI agent executes shell commands."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_agent_runs_shell_command(self, workspace, openai_client):
+        """Agent uses shell tool to run a command and reports the output."""
+        profile, tools = _get_profile_and_tools("openai")
+        config = SessionConfig(model=OPENAI_MODEL, provider="openai", max_turns=5)
+        config = profile.apply_to_config(config)
+
+        async with openai_client:
+            session = Session(client=openai_client, config=config, tools=tools)
+            result = await session.submit(
+                f"Use the shell tool to run 'echo SHELL_OK' in {workspace}. "
+                f"Tell me the exact output you got."
+            )
+
+        assert "SHELL_OK" in result, f"Agent must report shell output. Got: {result[:200]}"
+
+
+class TestGeminiShellExecution:
+    """§9.12.15: Gemini agent executes shell commands."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_agent_runs_shell_command(self, workspace, gemini_client):
+        """Agent uses shell tool to run a command and reports the output."""
+        profile, tools = _get_profile_and_tools("gemini")
+        config = SessionConfig(model=GEMINI_MODEL, provider="gemini", max_turns=5)
+        config = profile.apply_to_config(config)
+
+        async with gemini_client:
+            session = Session(client=gemini_client, config=config, tools=tools)
+            result = await session.submit(
+                f"Use the shell tool to run 'echo SHELL_OK' in {workspace}. "
+                f"Tell me the exact output you got."
+            )
+
+        assert "SHELL_OK" in result, f"Agent must report shell output. Got: {result[:200]}"
+
+

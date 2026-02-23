@@ -156,7 +156,7 @@ class TestPipelineWithAgentLoop:
             start [shape=Mdiamond]
             code [
                 shape=box,
-                prompt="Write a function called add that takes two numbers and returns their sum. Save it to {workspace}/add.py"
+                prompt="Write a function add(a, b) returning a+b. Save to {workspace}/add.py"
             ]
             done [shape=Msquare]
             start -> code -> done
@@ -377,7 +377,7 @@ class TestSoftwareFactory:
 
             implement [
                 shape=box,
-                prompt="Write the Python code for: $goal. Include the function and test assertions. Code only."
+                prompt="Write Python code for: $goal. Include function and assertions. Code only."
             ]
 
             done [shape=Msquare]
@@ -404,3 +404,32 @@ class TestSoftwareFactory:
         assert len(plan) > 10, "Plan should have content"
         assert "def" in code, "Implementation should contain a function"
         assert "palindrome" in code.lower() or "[::-1]" in code, "Code should be about palindromes"
+
+
+# ================================================================== #
+# Task 13: Shell execution — §9.12.10-12 (Anthropic)
+# ================================================================== #
+
+
+class TestShellExecutionAnthropic:
+    """§9.12.10-12: Anthropic agent executes shell commands."""
+
+    @pytest.mark.asyncio
+    async def test_agent_runs_shell_command(self, workspace, anthropic_client):
+        """Agent uses shell tool to run a command and gets output."""
+        from attractor_agent.profiles import get_profile
+        from attractor_agent.tools.core import ALL_CORE_TOOLS
+
+        profile = get_profile("anthropic")
+        config = SessionConfig(model="claude-sonnet-4-5", provider="anthropic", max_turns=5)
+        config = profile.apply_to_config(config)
+        tools = profile.get_tools(list(ALL_CORE_TOOLS))
+
+        async with anthropic_client:
+            session = Session(client=anthropic_client, config=config, tools=tools)
+            result = await session.submit(
+                f"Use the shell tool to run 'echo SHELL_OK' in {workspace}. "
+                f"Tell me the exact output you got."
+            )
+
+        assert "SHELL_OK" in result, f"Agent must report shell output. Got: {result[:200]}"
