@@ -472,7 +472,9 @@ class Session:
                     },
                 )
             )
-            if self._abort.is_set:
+            # §9.10.4: emit SESSION_END whenever session transitions to CLOSED
+            # (abort OR auth error). Normal turns leave state=IDLE — no SESSION_END.
+            if self._state == SessionState.CLOSED:
                 await self._emitter.emit(SessionEvent(kind=EventKind.SESSION_END))
 
         return result

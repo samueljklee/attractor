@@ -281,3 +281,74 @@ class TestParallelToolCalls:
         assert session._tool_registry.supports_parallel_tool_calls is True, (
             "ToolRegistry.supports_parallel_tool_calls must default to True when no profile given"
         )
+
+
+class TestSessionEndEvent:
+    """Task 4 — §9.10.4: SESSION_END emitted on all CLOSED transitions."""
+
+    @pytest.fixture(autouse=True)
+    def reset_process_callback(self):
+        from attractor_agent.tools.core import set_process_callback
+
+        yield
+        set_process_callback(None)
+
+    @pytest.mark.asyncio
+    async def test_session_end_emitted_on_auth_error(self):
+        """SESSION_END must be emitted when submit() encounters an auth error."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from attractor_agent.events import EventKind, SessionEvent
+        from attractor_agent.session import Session, SessionConfig
+        from attractor_llm.errors import AuthenticationError
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(side_effect=AuthenticationError("Invalid API key"))
+
+        received: list[EventKind] = []
+        session = Session(client=mock_client, config=SessionConfig())
+
+        async def capture(e: SessionEvent) -> None:
+            received.append(e.kind)
+
+        session._emitter.on(capture)
+        await session.submit("Hello")
+
+        assert EventKind.SESSION_END in received, (
+            "SESSION_END must be emitted when submit() results in an auth error "
+            f"(CLOSED transition). Got events: {received}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_session_end_not_emitted_on_normal_turn(self):
+        """SESSION_END must NOT be emitted after a normal turn (state stays IDLE)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from attractor_agent.events import EventKind, SessionEvent
+        from attractor_agent.session import Session, SessionConfig
+        from attractor_llm.types import Message, Response, Usage
+
+        mock_client = MagicMock()
+        resp = Response(
+            id="r1",
+            model="m",
+            content=[],
+            stop_reason="end_turn",
+            usage=Usage(input_tokens=5, output_tokens=5),
+            provider="test",
+        )
+        resp.message = Message.assistant("Hi.")
+        mock_client.complete = AsyncMock(return_value=resp)
+
+        received: list[EventKind] = []
+        session = Session(client=mock_client, config=SessionConfig())
+
+        async def capture(e: SessionEvent) -> None:
+            received.append(e.kind)
+
+        session._emitter.on(capture)
+        await session.submit("Hello")
+
+        assert EventKind.SESSION_END not in received, (
+            f"SESSION_END must NOT fire after a normal IDLE turn. Got: {received}"
+        )
