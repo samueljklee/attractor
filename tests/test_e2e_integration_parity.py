@@ -828,8 +828,9 @@ async def _run_loop_detection_test(workspace: Path, client: Any, model: str, pro
             f"and tell me the content each time. Do nothing else."
         )
 
-    assert EventKind.TURN_END in events or EventKind.TURN_LIMIT in events, (
-        "Session must terminate (loop detection or limit) on repetitive tool calls"
+    assert EventKind.LOOP_DETECTION in events, (
+        f"Expected LOOP_DETECTION event on repetitive tool use "
+        f"(window=4, threshold=3). Got events: {events}"
     )
     assert result is not None, "Session must return a result"
 
