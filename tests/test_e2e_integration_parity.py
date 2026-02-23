@@ -155,3 +155,63 @@ class TestGeminiFileCreation:
         assert "Hello from Attractor" in content
 
 
+# ================================================================== #
+# Task 12: Read + edit — §9.12.4 (OpenAI), §9.12.6 (Gemini)
+# ================================================================== #
+
+
+class TestOpenAIReadAndEdit:
+    """§9.12.4: OpenAI agent reads existing file and edits it."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_agent_edits_existing_file(self, workspace, openai_client):
+        """Agent uses edit_file to modify a pre-seeded file."""
+        target = workspace / "config.py"
+        target.write_text('DB_HOST = "localhost"\nDB_PORT = 5432\nDB_NAME = "mydb"\n')
+
+        profile, tools = _get_profile_and_tools("openai")
+        config = SessionConfig(model=OPENAI_MODEL, provider="openai", max_turns=10)
+        config = profile.apply_to_config(config)
+
+        async with openai_client:
+            session = Session(client=openai_client, config=config, tools=tools)
+            await session.submit(
+                f"Read the file {target} and change the DB_PORT from "
+                f"5432 to 3306. Use edit_file, not write_file."
+            )
+
+        content = target.read_text()
+        assert "3306" in content, "Port should be changed to 3306"
+        assert "5432" not in content, "Old port should be gone"
+        assert "DB_HOST" in content
+        assert "DB_NAME" in content
+
+
+class TestGeminiReadAndEdit:
+    """§9.12.6: Gemini agent reads existing file and edits it."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_agent_edits_existing_file(self, workspace, gemini_client):
+        """Agent uses edit_file to modify a pre-seeded file."""
+        target = workspace / "config.py"
+        target.write_text('DB_HOST = "localhost"\nDB_PORT = 5432\nDB_NAME = "mydb"\n')
+
+        profile, tools = _get_profile_and_tools("gemini")
+        config = SessionConfig(model=GEMINI_MODEL, provider="gemini", max_turns=10)
+        config = profile.apply_to_config(config)
+
+        async with gemini_client:
+            session = Session(client=gemini_client, config=config, tools=tools)
+            await session.submit(
+                f"Read the file {target} and change the DB_PORT from "
+                f"5432 to 3306. Use edit_file, not write_file."
+            )
+
+        content = target.read_text()
+        assert "3306" in content
+        assert "5432" not in content
+        assert "DB_HOST" in content
+
+
