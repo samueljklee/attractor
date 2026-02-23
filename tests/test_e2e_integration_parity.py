@@ -861,3 +861,69 @@ class TestLoopDetectionGemini:
         await _run_loop_detection_test(workspace, gemini_client, GEMINI_MODEL, "gemini")
 
 
+# ================================================================== #
+# Task 24: Error recovery — §9.12.40-42
+# ================================================================== #
+
+
+async def _run_error_recovery_test(client: Any, model: str, provider: str) -> None:
+    call_count = [0]
+
+    async def flaky_tool(**kwargs: Any) -> str:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise ValueError("Simulated tool failure on first call")
+        return "Tool succeeded on retry"
+
+    from attractor_llm.types import Tool
+
+    flaky = Tool(
+        name="flaky_tool",
+        description="A tool that fails on first call. Args: message (string).",
+        parameters={
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+        },
+        execute=flaky_tool,
+    )
+    config = SessionConfig(model=model, provider=provider, max_turns=5)
+    profile = _get_profile_and_tools(provider)[0]
+    config = profile.apply_to_config(config)
+    async with client:
+        session = Session(client=client, config=config, tools=[flaky])
+        result = await session.submit(
+            "Call the flaky_tool with message='test'. If it fails, try calling it again."
+        )
+    assert result is not None, "Session must return result after tool error"
+    assert len(result) > 0, f"Result must be non-empty. Got: {result!r}"
+    assert "Authentication" not in result, "Should not see auth errors during error recovery"
+
+
+class TestErrorRecoveryAnthropic:
+    """§9.12.40: Anthropic error recovery."""
+
+    @skip_no_anthropic
+    @pytest.mark.asyncio
+    async def test_error_recovery(self, anthropic_client):
+        await _run_error_recovery_test(anthropic_client, ANTHROPIC_MODEL, "anthropic")
+
+
+class TestErrorRecoveryOpenAI:
+    """§9.12.41: OpenAI error recovery."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_error_recovery(self, openai_client):
+        await _run_error_recovery_test(openai_client, OPENAI_MODEL, "openai")
+
+
+class TestErrorRecoveryGemini:
+    """§9.12.42: Gemini error recovery."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_error_recovery(self, gemini_client):
+        await _run_error_recovery_test(gemini_client, GEMINI_MODEL, "gemini")
+
+
