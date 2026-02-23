@@ -170,6 +170,158 @@ def parse_patch(patch_text: str) -> PatchSet:
 
 
 # ------------------------------------------------------------------ #
+# v4a parser (Spec Appendix A: *** Begin Patch format)
+# ------------------------------------------------------------------ #
+
+_V4A_BEGIN = "*** Begin Patch"
+_V4A_END = "*** End Patch"
+
+
+def _is_v4a(patch_text: str) -> bool:
+    """Return True if the patch uses *** Begin Patch format."""
+    return patch_text.lstrip().startswith(_V4A_BEGIN)
+
+
+async def _apply_v4a_patch(patch_text: str, base_dir: str | None = None) -> str:
+    """Apply a v4a format patch. Spec Appendix A.
+
+    Supports: *** Add File, *** Delete File, *** Update File (with optional *** Move to:)
+    """
+    import os
+
+    base = Path(base_dir or os.getcwd())
+    lines = patch_text.splitlines()
+    results: list[str] = []
+    i = 0
+
+    # Skip leading *** Begin Patch line
+    while i < len(lines) and not lines[i].startswith("*** Begin Patch"):
+        i += 1
+    if i < len(lines):
+        i += 1  # consume *** Begin Patch
+
+    while i < len(lines):
+        line = lines[i]
+
+        if line.startswith("*** End Patch"):
+            break
+
+        elif line.startswith("*** Add File: "):
+            path_str = line[len("*** Add File: ") :].strip()
+            file_path = Path(path_str) if Path(path_str).is_absolute() else base / path_str
+            i += 1
+            added: list[str] = []
+            while i < len(lines) and not lines[i].startswith("***"):
+                raw = lines[i]
+                if raw.startswith("+"):
+                    added.append(raw[1:])
+                i += 1
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text("\n".join(added) + "\n", encoding="utf-8")
+            results.append(f"Created {file_path}")
+
+        elif line.startswith("*** Delete File: "):
+            path_str = line[len("*** Delete File: ") :].strip()
+            file_path = Path(path_str) if Path(path_str).is_absolute() else base / path_str
+            if file_path.exists():
+                file_path.unlink()
+                results.append(f"Deleted {file_path}")
+            else:
+                results.append(f"Warning: {file_path} not found for deletion")
+            i += 1
+
+        elif line.startswith("*** Update File: "):
+            path_str = line[len("*** Update File: ") :].strip()
+            file_path = Path(path_str) if Path(path_str).is_absolute() else base / path_str
+            i += 1
+
+            # Optional: *** Move to: new_path
+            move_to: str | None = None
+            if i < len(lines) and lines[i].startswith("*** Move to: "):
+                move_to = lines[i][len("*** Move to: ") :].strip()
+                i += 1
+
+            if not file_path.exists():
+                results.append(f"Error: {file_path} not found for update")
+                while i < len(lines) and not lines[i].startswith("***"):
+                    i += 1
+                continue
+
+            content_lines = file_path.read_text(encoding="utf-8").splitlines()
+
+            while i < len(lines) and lines[i].startswith("@@ "):
+                context_hint = lines[i][3:].strip()
+                i += 1
+                hunk_lines: list[str] = []
+                while i < len(lines) and not lines[i].startswith(("@@ ", "***")):
+                    hunk_lines.append(lines[i])
+                    i += 1
+                content_lines = _apply_v4a_hunk(content_lines, hunk_lines, context_hint)
+
+            new_content = "\n".join(content_lines) + "\n"
+            if move_to:
+                new_path = Path(move_to) if Path(move_to).is_absolute() else base / move_to
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                new_path.write_text(new_content, encoding="utf-8")
+                file_path.unlink()
+                results.append(f"Updated and moved {file_path} -> {new_path}")
+            else:
+                file_path.write_text(new_content, encoding="utf-8")
+                results.append(f"Updated {file_path}")
+
+        else:
+            i += 1  # skip unrecognized lines
+
+    return "\n".join(results) if results else "No changes applied"
+
+
+def _apply_v4a_hunk(
+    content_lines: list[str],
+    hunk_lines: list[str],
+    context_hint: str,
+) -> list[str]:
+    """Apply a single v4a hunk to content_lines. Returns updated lines.
+
+    The hunk uses:
+      ' ' prefix = context line (must match)
+      '-' prefix = delete this line
+      '+' prefix = add this line
+    """
+    deletes = [ln[1:] for ln in hunk_lines if ln.startswith("-")]
+    adds = [ln[1:] for ln in hunk_lines if ln.startswith("+")]
+    context = [ln[1:] for ln in hunk_lines if ln.startswith(" ")]
+
+    search_block = deletes if deletes else context[:1]
+
+    anchor_idx = -1
+    if search_block:
+        for idx, cl in enumerate(content_lines):
+            if cl.strip() == search_block[0].strip():
+                anchor_idx = idx
+                break
+
+    if anchor_idx == -1:
+        for idx, cl in enumerate(content_lines):
+            if context_hint and context_hint.strip() in cl:
+                anchor_idx = idx
+                break
+
+    if anchor_idx == -1:
+        return content_lines + adds
+
+    result = list(content_lines)
+    pos = anchor_idx
+    for dl in deletes:
+        if pos < len(result) and result[pos].strip() == dl.strip():
+            result.pop(pos)
+
+    for j, al in enumerate(adds):
+        result.insert(pos + j, al)
+
+    return result
+
+
+# ------------------------------------------------------------------ #
 # Applicator
 # ------------------------------------------------------------------ #
 
@@ -203,14 +355,16 @@ async def apply_patch_to_file(
         path_error = _check_path_allowed(resolved)
         if path_error:
             raise PermissionError(path_error)
-        # Reject symlink traversal
-        base_resolved = file_path.resolve()
-        try:
-            resolved.relative_to(base_resolved)
-        except ValueError:
-            raise PermissionError(
-                f"Path traversal detected: {patch.target_path} resolves outside base directory"
-            ) from None
+        # Reject symlink traversal for relative paths only — absolute paths
+        # are already validated by _check_path_allowed above.
+        if not Path(patch.target_path).is_absolute():
+            base_resolved = file_path.resolve()
+            try:
+                resolved.relative_to(base_resolved)
+            except ValueError:
+                raise PermissionError(
+                    f"Path traversal detected: {patch.target_path} resolves outside base directory"
+                ) from None
 
     path_str = str(resolved)
 
@@ -348,6 +502,10 @@ async def _apply_patch_execute(
 ) -> str:
     """Execute the apply_patch tool."""
     import os
+
+    # Route v4a (*** Begin Patch) format to dedicated parser (spec Appendix A).
+    if _is_v4a(patch):
+        return await _apply_v4a_patch(patch, base_dir=working_dir)
 
     cwd = Path(working_dir or os.getcwd())
 

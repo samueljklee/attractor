@@ -726,3 +726,92 @@ class TestAnthropicDescriptions:
         assert result_tools[0].description == "Does something custom", (
             "Unknown tool description must be preserved unchanged"
         )
+
+
+class TestApplyPatchV4a:
+    """Task 10 — Appendix A: apply_patch handles v4a '*** Begin Patch' format."""
+
+    @pytest.mark.asyncio
+    async def test_v4a_add_file(self, tmp_path):
+        """*** Add File: creates a new file with the given lines."""
+        from attractor_agent.tools.core import _apply_patch, set_allowed_roots
+
+        set_allowed_roots([str(tmp_path)])
+
+        patch = (
+            "*** Begin Patch\n"
+            f"*** Add File: {tmp_path}/hello.py\n"
+            "+def greet():\n"
+            '+    return "Hello"\n'
+            "*** End Patch\n"
+        )
+        await _apply_patch(patch)
+
+        result_file = tmp_path / "hello.py"
+        assert result_file.exists(), "*** Add File must create the file"
+        content = result_file.read_text()
+        assert "def greet" in content
+
+    @pytest.mark.asyncio
+    async def test_v4a_update_file(self, tmp_path):
+        """*** Update File: modifies an existing file using context-based hunks."""
+        from attractor_agent.tools.core import _apply_patch, set_allowed_roots
+
+        set_allowed_roots([str(tmp_path)])
+
+        target = tmp_path / "config.py"
+        target.write_text("DEBUG = False\nTIMEOUT = 30\n")
+
+        patch = (
+            "*** Begin Patch\n"
+            f"*** Update File: {tmp_path}/config.py\n"
+            "@@ DEBUG\n"
+            "-DEBUG = False\n"
+            "+DEBUG = True\n"
+            "*** End Patch\n"
+        )
+        await _apply_patch(patch)
+
+        content = target.read_text()
+        assert "DEBUG = True" in content
+        assert "DEBUG = False" not in content
+        assert "TIMEOUT = 30" in content
+
+    @pytest.mark.asyncio
+    async def test_v4a_delete_file(self, tmp_path):
+        """*** Delete File: removes the target file."""
+        from attractor_agent.tools.core import _apply_patch, set_allowed_roots
+
+        set_allowed_roots([str(tmp_path)])
+
+        target = tmp_path / "old.py"
+        target.write_text("print('old')\n")
+        assert target.exists()
+
+        patch = f"*** Begin Patch\n*** Delete File: {tmp_path}/old.py\n*** End Patch\n"
+        await _apply_patch(patch)
+
+        assert not target.exists(), "*** Delete File must remove the file"
+
+    @pytest.mark.asyncio
+    async def test_standard_unified_diff_still_works(self, tmp_path):
+        """Standard --- a/ +++ b/ patches must still be handled (backward compat)."""
+        from attractor_agent.tools.core import _apply_patch, set_allowed_roots
+
+        set_allowed_roots([str(tmp_path)])
+
+        target = tmp_path / "foo.py"
+        target.write_text("x = 1\ny = 2\n")
+
+        patch = (
+            f"--- a/{tmp_path}/foo.py\n"
+            f"+++ b/{tmp_path}/foo.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            "-x = 1\n"
+            "+x = 99\n"
+            " y = 2\n"
+        )
+        await _apply_patch(patch)
+
+        content = target.read_text()
+        assert "x = 99" in content
