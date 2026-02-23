@@ -325,3 +325,94 @@ class TestParallelToolCallsGemini:
         )
 
 
+# ================================================================== #
+# Task 16: Subagent spawn — §9.12.34 (OpenAI), §9.12.36 (Gemini)
+# ================================================================== #
+
+
+class TestSubagentOpenAI:
+    """§9.12.34: OpenAI subagent spawning."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_subagent_completes_task(self, openai_client):
+        """Subagent handles a delegated coding question (no tools)."""
+        result = await spawn_subagent(
+            client=openai_client,
+            prompt=(
+                "Write a Python one-liner that reverses a string. "
+                "Just output the code, nothing else."
+            ),
+            parent_depth=0,
+            max_depth=3,
+            model=OPENAI_MODEL,
+            provider="openai",
+            include_tools=False,
+        )
+        assert result.depth == 1
+        assert len(result.text) > 5
+        assert "[::-1]" in result.text or "reverse" in result.text.lower()
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_subagent_with_tools(self, workspace, openai_client):
+        """Subagent uses write_file to create a file."""
+        result = await spawn_subagent(
+            client=openai_client,
+            prompt=(
+                f"Write a file called 'answer.txt' in {workspace} containing just the number 42."
+            ),
+            parent_depth=0,
+            max_depth=3,
+            model=OPENAI_MODEL,
+            provider="openai",
+            include_tools=True,
+        )
+        assert result.depth == 1
+        answer_file = workspace / "answer.txt"
+        assert answer_file.exists(), "Subagent should have created answer.txt"
+        assert "42" in answer_file.read_text().strip()
+
+
+class TestSubagentGemini:
+    """§9.12.36: Gemini subagent spawning."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_subagent_completes_task(self, gemini_client):
+        """Subagent handles a delegated coding question (no tools)."""
+        result = await spawn_subagent(
+            client=gemini_client,
+            prompt=(
+                "Write a Python one-liner that reverses a string. "
+                "Just output the code, nothing else."
+            ),
+            parent_depth=0,
+            max_depth=3,
+            model=GEMINI_MODEL,
+            provider="gemini",
+            include_tools=False,
+        )
+        assert result.depth == 1
+        assert len(result.text) > 5
+        assert "[::-1]" in result.text or "reverse" in result.text.lower()
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_subagent_with_tools(self, workspace, gemini_client):
+        """Subagent uses write_file to create a file."""
+        result = await spawn_subagent(
+            client=gemini_client,
+            prompt=(
+                f"Write a file called 'answer.txt' in {workspace} containing just the number 42."
+            ),
+            parent_depth=0,
+            max_depth=3,
+            model=GEMINI_MODEL,
+            provider="gemini",
+            include_tools=True,
+        )
+        assert result.depth == 1
+        answer_file = workspace / "answer.txt"
+        assert answer_file.exists()
+        assert "42" in answer_file.read_text().strip()
