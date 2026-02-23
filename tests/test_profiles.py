@@ -306,7 +306,13 @@ class TestProfileSessionIntegration:
 
     @pytest.mark.asyncio
     async def test_profile_tools_used_in_session(self):
-        """Profile-customized tool descriptions reach the LLM."""
+        """Profile-customized tool descriptions reach the LLM (§9.2.6).
+
+        When a tool has no caller-supplied description, the Anthropic override
+        is applied and must reach the LLM.
+        """
+        from attractor_llm.types import Tool
+
         adapter = MockAdapter(responses=[make_text_response("ok")])
         client = Client()
         client.register_adapter("mock", adapter)
@@ -315,7 +321,14 @@ class TestProfileSessionIntegration:
         config = SessionConfig(model="mock-model", provider="mock")
         config = profile.apply_to_config(config)
 
-        tools = profile.get_tools(list(ALL_CORE_TOOLS))
+        # Supply edit_file with NO description so Anthropic override is applied (§9.2.6)
+        edit_tool_no_desc = Tool(
+            name="edit_file",
+            description="",
+            parameters={"type": "object", "properties": {}},
+            execute=lambda **kw: "ok",
+        )
+        tools = profile.get_tools([edit_tool_no_desc])
         session = Session(client=client, config=config, tools=tools)
         await session.submit("test")
 

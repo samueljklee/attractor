@@ -662,3 +662,67 @@ class TestInterviewerAnswer:
         assert isinstance(result, Answer), (
             f"AutoApproveInterviewer.ask() must return Answer, got {type(result)}"
         )
+
+
+class TestAnthropicDescriptions:
+    """Task 9 — §9.2.6: Anthropic profile must not overwrite caller tool descriptions."""
+
+    def test_caller_description_preserved_over_anthropic_override(self):
+        """When caller supplies a description for edit_file, it must not be replaced."""
+        from attractor_agent.profiles.anthropic import AnthropicProfile
+        from attractor_llm.types import Tool
+
+        caller_desc = "MY CUSTOM edit_file description that must be preserved"
+        tool = Tool(
+            name="edit_file",
+            description=caller_desc,
+            parameters={"type": "object", "properties": {}},
+            execute=lambda **kw: "ok",
+        )
+        profile = AnthropicProfile()
+        result_tools = profile.get_tools([tool])
+        assert result_tools[0].description == caller_desc, (
+            f"Caller description '{caller_desc}' was overwritten with "
+            f"'{result_tools[0].description}'"
+        )
+
+    def test_anthropic_override_applied_when_description_empty(self):
+        """Anthropic override is applied when caller description is None/empty."""
+        from attractor_agent.profiles.anthropic import (
+            _ANTHROPIC_TOOL_DESCRIPTIONS,
+            AnthropicProfile,
+        )
+        from attractor_llm.types import Tool
+
+        assert "edit_file" in _ANTHROPIC_TOOL_DESCRIPTIONS, (
+            "edit_file must be in Anthropic override map"
+        )
+
+        tool_no_desc = Tool(
+            name="edit_file",
+            description="",
+            parameters={"type": "object", "properties": {}},
+            execute=lambda **kw: "ok",
+        )
+        profile = AnthropicProfile()
+        result_tools = profile.get_tools([tool_no_desc])
+        assert result_tools[0].description == _ANTHROPIC_TOOL_DESCRIPTIONS["edit_file"], (
+            "Anthropic override must be applied when caller description is empty"
+        )
+
+    def test_unknown_tool_description_preserved(self):
+        """Tools not in the Anthropic override map keep their original description."""
+        from attractor_agent.profiles.anthropic import AnthropicProfile
+        from attractor_llm.types import Tool
+
+        tool = Tool(
+            name="my_custom_tool",
+            description="Does something custom",
+            parameters={"type": "object", "properties": {}},
+            execute=lambda **kw: "ok",
+        )
+        profile = AnthropicProfile()
+        result_tools = profile.get_tools([tool])
+        assert result_tools[0].description == "Does something custom", (
+            "Unknown tool description must be preserved unchanged"
+        )

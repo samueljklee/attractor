@@ -46,7 +46,12 @@ class AnthropicProfile:
         """
         tools: list[Tool] = []
         for tool in base_tools:
-            desc = _ANTHROPIC_TOOL_DESCRIPTIONS.get(tool.name, tool.description)
+            # §9.2.6: only apply Anthropic override when caller did not supply a description
+            desc = (
+                _ANTHROPIC_TOOL_DESCRIPTIONS.get(tool.name, tool.description)
+                if not tool.description
+                else tool.description
+            )
             tools.append(
                 Tool(
                     name=tool.name,
