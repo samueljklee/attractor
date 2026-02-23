@@ -647,3 +647,59 @@ class TestReadAnalyzeEditGemini:
         await _run_read_analyze_edit(workspace, gemini_client, GEMINI_MODEL, "gemini")
 
 
+# ================================================================== #
+# Task 20: Tool output truncation — §9.12.22-24
+# ================================================================== #
+
+
+async def _run_truncation_test(workspace: Path, client: Any, model: str, provider: str) -> None:
+    large_file = workspace / "large.txt"
+    large_file.write_text("\n".join(f"Line {i}: {'x' * 100}" for i in range(5000)))
+    config = SessionConfig(
+        model=model,
+        provider=provider,
+        max_turns=5,
+        tool_output_limits={"read_file": 500},
+    )
+    profile, tools = _get_profile_and_tools(provider)
+    config = profile.apply_to_config(config)
+    async with client:
+        session = Session(client=client, config=config, tools=tools)
+        result = await session.submit(
+            f"Read the file {large_file} and tell me what the first line says. "
+            f"Note: the file may be truncated in your view."
+        )
+    assert result is not None, "Session must return a result on truncated output"
+    assert len(result) > 0, "Result must be non-empty"
+    assert "[Error:" not in result, (
+        f"Agent should handle truncation gracefully. Got: {result[:200]}"
+    )
+
+
+class TestTruncationAnthropic:
+    """§9.12.22: Anthropic tool output truncation."""
+
+    @skip_no_anthropic
+    @pytest.mark.asyncio
+    async def test_tool_output_truncation(self, workspace, anthropic_client):
+        await _run_truncation_test(workspace, anthropic_client, ANTHROPIC_MODEL, "anthropic")
+
+
+class TestTruncationOpenAI:
+    """§9.12.23: OpenAI tool output truncation."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_tool_output_truncation(self, workspace, openai_client):
+        await _run_truncation_test(workspace, openai_client, OPENAI_MODEL, "openai")
+
+
+class TestTruncationGemini:
+    """§9.12.24: Gemini tool output truncation."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_tool_output_truncation(self, workspace, gemini_client):
+        await _run_truncation_test(workspace, gemini_client, GEMINI_MODEL, "gemini")
+
+
