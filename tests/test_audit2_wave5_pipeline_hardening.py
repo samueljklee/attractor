@@ -271,6 +271,7 @@ class TestOpenAICacheEfficiency:
         # after the 1st request.  Subsequent calls with the same long system prompt
         # should report cached_tokens in input_tokens_details.
         cumulative_cache_reads = 0
+        cumulative_input = 0
 
         for turn, user_msg in enumerate(_TURNS, start=1):
             result = await generate(
@@ -282,11 +283,13 @@ class TestOpenAICacheEfficiency:
             )
             assert result.total_usage.input_tokens > 0, f"Turn {turn}: expected input_tokens > 0"
             cumulative_cache_reads += result.total_usage.cache_read_tokens
+            cumulative_input += result.total_usage.input_tokens
 
-        # By turn 3-5 at least one response should show cached tokens
-        assert cumulative_cache_reads > 0, (
-            f"Expected cache_read_tokens > 0 across {len(_TURNS)} turns with a "
-            f"{len(_LONG_SYSTEM)}-char system prompt, got 0 total cache reads. "
+        # By turn 5 the majority of input tokens should come from the cache
+        cache_ratio = cumulative_cache_reads / cumulative_input if cumulative_input > 0 else 0.0
+        assert cache_ratio > 0.50, (
+            f"Expected cache_read / input_tokens > 0.50 across {len(_TURNS)} turns "
+            f"(got {cumulative_cache_reads}/{cumulative_input} = {cache_ratio:.2%}). "
             "OpenAI prefix caching may not be active for this account/region."
         )
 
@@ -372,6 +375,7 @@ class TestGeminiCacheEfficiency:
         # Gemini implicit caching: identical context prefix is served from cache
         # for repeated requests (cachedContentTokenCount in usage metadata).
         cumulative_cache_reads = 0
+        cumulative_input = 0
 
         for turn, user_msg in enumerate(_TURNS, start=1):
             result = await generate(
@@ -383,10 +387,12 @@ class TestGeminiCacheEfficiency:
             )
             assert result.total_usage.input_tokens > 0, f"Turn {turn}: expected input_tokens > 0"
             cumulative_cache_reads += result.total_usage.cache_read_tokens
+            cumulative_input += result.total_usage.input_tokens
 
-        # By turn 3-5 at least one response should show cached tokens
-        assert cumulative_cache_reads > 0, (
-            f"Expected cache_read_tokens > 0 across {len(_TURNS)} turns with a "
-            f"{len(_LONG_SYSTEM)}-char system prompt, got 0 total cache reads. "
+        # By turn 5 the majority of input tokens should come from the cache
+        cache_ratio = cumulative_cache_reads / cumulative_input if cumulative_input > 0 else 0.0
+        assert cache_ratio > 0.50, (
+            f"Expected cache_read / input_tokens > 0.50 across {len(_TURNS)} turns "
+            f"(got {cumulative_cache_reads}/{cumulative_input} = {cache_ratio:.2%}). "
             "Gemini implicit caching may not be active for this prompt length/model."
         )
