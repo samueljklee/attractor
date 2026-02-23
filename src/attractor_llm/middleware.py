@@ -349,9 +349,61 @@ class MiddlewareClient:
         await self._client.__aexit__(*args)
 
 
-def apply_middleware(client: Any, middleware: list[Any]) -> MiddlewareClient:
+def _wrap_call_next(mw: Any, next_handler: Any) -> Any:
+    """Wrap a single functional middleware around the next handler."""
+
+    async def handler(req: Any) -> Any:
+        return await mw(req, next_handler)
+
+    return handler
+
+
+class _CallNextMiddlewareClient:
+    """Wraps a Client with a functional (call_next) middleware chain.
+
+    Used by apply_middleware() when middleware items are async callables
+    with the signature ``async (request, call_next) -> response``.
+    """
+
+    def __init__(self, client: Any, middleware: list[Any]) -> None:
+        self._client = client
+        self._middleware = middleware
+
+    async def complete(self, request: Any) -> Any:
+        """Build the call_next chain and execute it."""
+
+        async def core(req: Any) -> Any:
+            return await self._client.complete(req)
+
+        handler = core
+        for mw in reversed(self._middleware):
+            handler = _wrap_call_next(mw, handler)
+
+        return await handler(request)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
+def apply_middleware(client: Any, middleware: list[Any]) -> Any:
     """Wrap a Client with a middleware chain.
 
-    Returns a MiddlewareClient that intercepts complete() calls.
+    Supports two middleware styles:
+
+    - **Protocol style**: objects with ``before_request`` / ``after_response``
+      methods (see :class:`Middleware`).
+    - **Functional style**: async callables with the signature
+      ``async (request, call_next) -> response``.
+
+    When all items in *middleware* are coroutine functions (functional style),
+    the chain is built using :class:`_CallNextMiddlewareClient` so that
+    ``A(B(core))`` executes as: A_before → B_before → core → B_after → A_after.
+
+    Returns a wrapped client that intercepts ``complete()`` calls.
     """
+    import inspect
+
+    if middleware and all(inspect.iscoroutinefunction(mw) for mw in middleware):
+        return _CallNextMiddlewareClient(client, middleware)
+
     return MiddlewareClient(client, middleware)

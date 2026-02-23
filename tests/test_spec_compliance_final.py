@@ -394,3 +394,75 @@ class TestSessionEndEvent:
             "SESSION_END must be emitted when session is aborted (CLOSED transition). "
             f"Got events: {received}"
         )
+
+
+class TestMiddlewareChain:
+    """Task 5 — §8.1.6: apply_middleware() wraps client correctly."""
+
+    @pytest.mark.asyncio
+    async def test_apply_middleware_calls_middleware_in_order(self):
+        """apply_middleware() must call registered middleware in registration order:
+        A(B(core)) means A_before -> B_before -> B_after -> A_after."""
+        from typing import Any
+        from unittest.mock import AsyncMock, MagicMock
+
+        from attractor_llm.client import Client
+        from attractor_llm.middleware import apply_middleware
+        from attractor_llm.types import Message, Request, Response, Usage
+
+        call_order: list[str] = []
+
+        async def middleware_a(request: Any, call_next: Any) -> Any:
+            call_order.append("A_before")
+            response = await call_next(request)
+            call_order.append("A_after")
+            return response
+
+        async def middleware_b(request: Any, call_next: Any) -> Any:
+            call_order.append("B_before")
+            response = await call_next(request)
+            call_order.append("B_after")
+            return response
+
+        mock_resp = Response(
+            id="r1",
+            model="m",
+            content=[],
+            stop_reason="end_turn",
+            usage=Usage(input_tokens=1, output_tokens=1),
+            provider="test",
+        )
+        mock_resp.message = Message.assistant("Hi.")
+
+        base_client = MagicMock(spec=Client)
+        base_client.complete = AsyncMock(return_value=mock_resp)
+
+        wrapped = apply_middleware(base_client, [middleware_a, middleware_b])
+
+        req = Request(model="test", messages=[Message.user("Hello")])
+        await wrapped.complete(req)
+
+        assert call_order == ["A_before", "B_before", "B_after", "A_after"], (
+            f"Middleware must wrap in order: A(B(core)). Got: {call_order}"
+        )
+
+    def test_client_middleware_param_emits_deprecation_warning(self):
+        """Client(middleware=[...]) must emit DeprecationWarning per §8.1.6."""
+        import warnings
+        from typing import Any
+
+        from attractor_llm.client import Client
+
+        async def noop(req: Any, call_next: Any) -> Any:
+            return await call_next(req)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            Client(middleware=[noop])
+        assert len(w) >= 1, "Client(middleware=[...]) must emit at least one warning"
+        categories = [x.category for x in w]
+        assert DeprecationWarning in categories, f"Expected DeprecationWarning, got: {categories}"
+        messages = [str(x.message).lower() for x in w]
+        assert any("deprecated" in m or "apply_middleware" in m for m in messages), (
+            f"Warning must mention 'deprecated' or 'apply_middleware'. Got: {messages}"
+        )
