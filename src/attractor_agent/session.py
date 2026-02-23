@@ -239,14 +239,13 @@ class Session:
 
         # Tools
         # §9.3.5: propagate parallel tool call support from profile to registry.
-        # profile is a local variable still in scope from the __init__ parameter.
-        _supports_parallel = profile.supports_parallel_tool_calls if profile is not None else True
+        supports_parallel = profile.supports_parallel_tool_calls if profile is not None else True
 
         self._tool_registry = ToolRegistry(
             event_emitter=self._emitter,
             tool_output_limits=self._config.tool_output_limits,
             tool_line_limits=self._config.tool_line_limits,
-            supports_parallel_tool_calls=_supports_parallel,  # §9.3.5
+            supports_parallel_tool_calls=supports_parallel,  # §9.3.5
         )
         if tools:
             self._tool_registry.register_many(list(tools))

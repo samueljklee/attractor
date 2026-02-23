@@ -223,6 +223,14 @@ class TestShellProcessCallback:
 class TestParallelToolCalls:
     """Task 3 — §9.3.5: supports_parallel_tool_calls propagated to ToolRegistry."""
 
+    @pytest.fixture(autouse=True)
+    def reset_process_callback(self):
+        """Reset module-level process callback after each test to avoid global state leakage."""
+        from attractor_agent.tools.core import set_process_callback
+
+        yield
+        set_process_callback(None)
+
     def test_profile_parallel_false_propagates_to_registry(self):
         """When profile.supports_parallel_tool_calls=False, registry must also be False."""
         from unittest.mock import MagicMock
@@ -259,7 +267,9 @@ class TestParallelToolCalls:
             config=SessionConfig(),
             profile=mock_profile,
         )
-        assert session._tool_registry.supports_parallel_tool_calls is True
+        assert session._tool_registry.supports_parallel_tool_calls is True, (
+            "ToolRegistry.supports_parallel_tool_calls must reflect the profile's True value"
+        )
 
     def test_no_profile_registry_defaults_true(self):
         """Without a profile, ToolRegistry.supports_parallel_tool_calls defaults True."""
@@ -268,4 +278,6 @@ class TestParallelToolCalls:
         from attractor_agent.session import Session, SessionConfig
 
         session = Session(client=MagicMock(), config=SessionConfig())
-        assert session._tool_registry.supports_parallel_tool_calls is True
+        assert session._tool_registry.supports_parallel_tool_calls is True, (
+            "ToolRegistry.supports_parallel_tool_calls must default to True when no profile given"
+        )
