@@ -15,12 +15,17 @@ Groups:
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Generator
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
+from starlette.testclient import TestClient
 
 from attractor_agent.session import SessionConfig
 from attractor_agent.subagent import spawn_subagent
+from attractor_pipeline.server.app import app
 
 
 class TestMaxTurnsDefaults:
@@ -60,7 +65,7 @@ class TestMaxTurnsDefaults:
     @pytest.mark.asyncio
     async def test_session_zero_max_turns_does_not_limit(self):
         """With max_turns=0, a session must NOT hit the turn limit on turn 1."""
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
 
         from attractor_agent.session import Session, SessionConfig
         from attractor_llm.types import Message, Response, Usage
@@ -149,7 +154,7 @@ class TestMaxTurnsDefaults:
     @pytest.mark.asyncio
     async def test_session_zero_max_tool_rounds_does_not_limit(self):
         """With max_tool_rounds_per_turn=0, tool rounds must not be limited on round 0."""
-        from unittest.mock import AsyncMock, MagicMock, patch  # noqa: F401
+        from unittest.mock import AsyncMock
 
         from attractor_agent.session import Session, SessionConfig
         from attractor_llm.types import Message, Response, Usage
@@ -505,16 +510,18 @@ class TestMiddlewareChain:
 class TestHttpServer:
     """Task 6 — §11.11.5: POST /run calls run_pipeline, not a stub."""
 
+    @pytest.fixture(autouse=True)
+    def clear_runs(self) -> Generator[None, None, None]:
+        """Reset module-level _runs between tests (§11.11.5)."""
+        from attractor_pipeline.server import app as server_module
+
+        server_module._runs.clear()
+        yield
+        server_module._runs.clear()
+
     @pytest.mark.asyncio
     async def test_post_run_calls_run_pipeline(self):
         """POST /run must call run_pipeline(), not just sleep(0)."""
-        import asyncio
-        from unittest.mock import MagicMock, patch
-
-        from starlette.testclient import TestClient
-
-        from attractor_pipeline.server.app import app
-
         pipeline_called = []
 
         async def mock_run_pipeline(*args, **kwargs):
@@ -530,19 +537,17 @@ class TestHttpServer:
             response = client.post("/run", json={"pipeline": {}, "input": {}})
 
         assert response.status_code == 202, f"Expected 202, got {response.status_code}"
-        # Give the background task a moment to execute
-        await asyncio.sleep(0.1)
+        run_id = response.json()["id"]
+        # Direct task inspection: wait for background task (§11.11.5)
+        from attractor_pipeline.server.app import _runs
+
+        task = _runs[run_id]["task"]
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
         assert len(pipeline_called) > 0, "run_pipeline must be called when POST /run is received"
 
     @pytest.mark.asyncio
     async def test_status_transitions_to_completed(self):
         """Status must transition pending -> running -> completed after run_pipeline returns."""
-        import asyncio
-        from unittest.mock import MagicMock, patch
-
-        from starlette.testclient import TestClient
-
-        from attractor_pipeline.server.app import app
 
         async def mock_run_pipeline(*args: Any, **kwargs: Any) -> Any:
             result = MagicMock()
@@ -556,8 +561,11 @@ class TestHttpServer:
             assert response.status_code == 202
             run_id = response.json()["id"]
 
-        # Allow background task to complete
-        await asyncio.sleep(0.2)
+        # Direct task inspection: wait for background task (§11.11.5)
+        from attractor_pipeline.server.app import _runs
+
+        task = _runs[run_id]["task"]
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
 
         status_resp = client.get(f"/status/{run_id}")
         assert status_resp.status_code == 200
@@ -568,12 +576,6 @@ class TestHttpServer:
     @pytest.mark.asyncio
     async def test_status_transitions_to_failed_on_exception(self):
         """Status must transition to 'failed' when run_pipeline raises."""
-        import asyncio
-        from unittest.mock import patch
-
-        from starlette.testclient import TestClient
-
-        from attractor_pipeline.server.app import app
 
         async def failing_run_pipeline(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("Pipeline execution failed")
@@ -584,7 +586,11 @@ class TestHttpServer:
             assert response.status_code == 202
             run_id = response.json()["id"]
 
-        await asyncio.sleep(0.2)
+        # Direct task inspection: wait for background task (§11.11.5)
+        from attractor_pipeline.server.app import _runs
+
+        task = _runs[run_id]["task"]
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
 
         status_resp = client.get(f"/status/{run_id}")
         assert status_resp.status_code == 200
@@ -595,13 +601,6 @@ class TestHttpServer:
     @pytest.mark.asyncio
     async def test_null_pipeline_completes_immediately(self):
         """POST /run with null pipeline field completes without calling run_pipeline."""
-        import asyncio
-        from unittest.mock import MagicMock, patch
-
-        from starlette.testclient import TestClient
-
-        from attractor_pipeline.server.app import app
-
         pipeline_called = []
 
         async def mock_run_pipeline(*args: Any, **kwargs: Any) -> Any:
@@ -614,7 +613,11 @@ class TestHttpServer:
             assert response.status_code == 202
             run_id = response.json()["id"]
 
-        await asyncio.sleep(0.2)
+        # Direct task inspection: wait for background task (§11.11.5)
+        from attractor_pipeline.server.app import _runs
+
+        task = _runs[run_id]["task"]
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
 
         status_resp = client.get(f"/status/{run_id}")
         assert status_resp.json()["status"] == "completed"
