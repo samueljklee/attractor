@@ -593,3 +593,57 @@ class TestGrepGlobGemini:
         )
 
 
+# ================================================================== #
+# Task 19: Multi-step read→analyze→edit — §9.12.19-21
+# ================================================================== #
+
+
+async def _run_read_analyze_edit(workspace: Path, client: Any, model: str, provider: str) -> None:
+    target = workspace / "scores.py"
+    target.write_text(
+        "PASSING_SCORE = 60\n"
+        "FAILING_SCORE = 40\n"
+        "# scores above PASSING_SCORE are considered passing\n"
+    )
+    profile, tools = _get_profile_and_tools(provider)
+    config = SessionConfig(model=model, provider=provider, max_turns=8)
+    config = profile.apply_to_config(config)
+    async with client:
+        session = Session(client=client, config=config, tools=tools)
+        await session.submit(
+            f"Read {target}. "
+            f"If the PASSING_SCORE is below 70, raise it to 70. "
+            f"Use edit_file to make the change."
+        )
+    content = target.read_text()
+    assert "70" in content, f"PASSING_SCORE should be updated to 70. Got:\n{content}"
+    assert "60" not in content, f"Old value 60 should be replaced. Got:\n{content}"
+
+
+class TestReadAnalyzeEditAnthropic:
+    """§9.12.19: Anthropic multi-step read→analyze→edit."""
+
+    @skip_no_anthropic
+    @pytest.mark.asyncio
+    async def test_read_analyze_edit(self, workspace, anthropic_client):
+        await _run_read_analyze_edit(workspace, anthropic_client, ANTHROPIC_MODEL, "anthropic")
+
+
+class TestReadAnalyzeEditOpenAI:
+    """§9.12.20: OpenAI multi-step read→analyze→edit."""
+
+    @skip_no_openai
+    @pytest.mark.asyncio
+    async def test_read_analyze_edit(self, workspace, openai_client):
+        await _run_read_analyze_edit(workspace, openai_client, OPENAI_MODEL, "openai")
+
+
+class TestReadAnalyzeEditGemini:
+    """§9.12.21: Gemini multi-step read→analyze→edit."""
+
+    @skip_no_gemini
+    @pytest.mark.asyncio
+    async def test_read_analyze_edit(self, workspace, gemini_client):
+        await _run_read_analyze_edit(workspace, gemini_client, GEMINI_MODEL, "gemini")
+
+
