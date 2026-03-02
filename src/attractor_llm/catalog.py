@@ -24,6 +24,7 @@ class ModelInfo:
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
     aliases: tuple[str, ...] = ()
+    knowledge_cutoff: str | None = None
 
 
 MODEL_CATALOG: list[ModelInfo] = [
@@ -36,6 +37,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("opus", "claude-opus", "opus-4-6"),
+        knowledge_cutoff="2024-08",
     ),
     ModelInfo(
         id="claude-sonnet-4-5",
@@ -46,6 +48,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("sonnet", "claude-sonnet", "sonnet-4-5"),
+        knowledge_cutoff="2024-08",
     ),
     ModelInfo(
         id="gpt-5.2",
@@ -56,6 +59,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("gpt-5", "5.2"),
+        knowledge_cutoff="2024-04",
     ),
     ModelInfo(
         id="gpt-5.2-mini",
@@ -66,6 +70,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("gpt-mini", "5.2-mini"),
+        knowledge_cutoff="2024-04",
     ),
     ModelInfo(
         id="gpt-5.2-codex",
@@ -76,6 +81,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("gpt-codex", "5.2-codex"),
+        knowledge_cutoff="2024-04",
     ),
     ModelInfo(
         id="gemini-3-pro-preview",
@@ -86,6 +92,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("gemini-pro", "3-pro"),
+        knowledge_cutoff="2024-12",
     ),
     ModelInfo(
         id="gemini-3-flash-preview",
@@ -96,6 +103,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_vision=True,
         supports_reasoning=True,
         aliases=("gemini-flash", "3-flash", "flash"),
+        knowledge_cutoff="2024-12",
     ),
 ]
 
