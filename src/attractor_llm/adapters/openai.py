@@ -586,7 +586,7 @@ class OpenAIAdapter:
             case "response.created":
                 resp = data.get("response", data)
                 yield StreamEvent(
-                    kind=StreamEventKind.START,
+                    kind=StreamEventKind.STREAM_START,
                     model=resp.get("model", request.model),
                     response_id=resp.get("id", ""),
                     provider="openai",

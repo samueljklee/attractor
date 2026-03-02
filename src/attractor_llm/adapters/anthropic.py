@@ -609,7 +609,7 @@ class AnthropicAdapter:
                 msg = data.get("message", {})
                 usage_data = msg.get("usage", {})
                 yield StreamEvent(
-                    kind=StreamEventKind.START,
+                    kind=StreamEventKind.STREAM_START,
                     model=msg.get("model", model),
                     response_id=msg.get("id", response_id),
                     provider="anthropic",
