@@ -840,9 +840,6 @@ def _validate_against_schema(obj: Any, schema: dict[str, Any]) -> str | None:
             if key in properties:
                 prop_type = properties[key].get("type")
                 if prop_type and not _check_type(val, prop_type):
-                    return (
-                        f"Field '{key}': expected '{prop_type}', "
-                        f"got '{type(val).__name__}'"
-                    )
+                    return f"Field '{key}': expected '{prop_type}', got '{type(val).__name__}'"
 
     return None

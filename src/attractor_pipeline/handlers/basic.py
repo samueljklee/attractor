@@ -114,10 +114,7 @@ class ToolHandler:
         # Read command: spec §4.10 uses "tool_command" attribute; "command" and "prompt"
         # are accepted as fallbacks for backward compatibility.
         command = (
-            node.attrs.get("tool_command", "")
-            or node.attrs.get("command", "")
-            or node.prompt
-            or ""
+            node.attrs.get("tool_command", "") or node.attrs.get("command", "") or node.prompt or ""
         )
         if not command:
             return HandlerResult(

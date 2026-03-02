@@ -244,8 +244,8 @@ def select_edge(
 class PipelineStatus(StrEnum):
     """Pipeline execution outcome. Values match spec §11.3.8."""
 
-    COMPLETED = "success"    # spec §11.3.8
-    FAILED = "fail"          # spec §11.3.8
+    COMPLETED = "success"  # spec §11.3.8
+    FAILED = "fail"  # spec §11.3.8
     CANCELLED = "cancelled"
 
 
