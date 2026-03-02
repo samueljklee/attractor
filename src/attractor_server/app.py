@@ -1,6 +1,6 @@
-"""Starlette application with all 9 REST endpoints.
+"""Starlette application with all 9 REST endpoints plus DoD §11.11.5 aliases.
 
-Spec reference: attractor-spec §9.5.
+Spec reference: attractor-spec §9.5, §11.11.5.
 """
 
 from __future__ import annotations
@@ -302,6 +302,49 @@ async def get_context(request: Request) -> JSONResponse:
 
 
 # ------------------------------------------------------------------ #
+# DoD §11.11.5 alias: POST /answer/{id}
+# ------------------------------------------------------------------ #
+
+
+async def _answer_first_question(request: Request) -> JSONResponse:
+    """Submit an answer to the FIRST pending question in a pipeline.
+
+    Simplified alias for POST /pipelines/{id}/questions/{qid}/answer that
+    does not require knowing the question ID in advance.  Accepts
+    ``{"answer": "..."}`` and applies it to the first pending question.
+    """
+    manager = get_manager()
+    pipeline_id = request.path_params["id"]
+    run = manager.get_run(pipeline_id)
+
+    if not run:
+        return JSONResponse({"error": f"Pipeline {pipeline_id} not found"}, status_code=404)
+
+    if not run.pending_questions:
+        return JSONResponse({"error": "No pending questions for this pipeline"}, status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    answer = body.get("answer")
+    if not answer:
+        return JSONResponse({"error": "Missing 'answer' field"}, status_code=400)
+
+    # Take the first pending question (ordered by insertion)
+    first_qid = next(iter(run.pending_questions))
+    accepted = submit_answer(run, first_qid, answer)
+    if not accepted:
+        return JSONResponse(
+            {"error": f"Question {first_qid} could not be answered"},
+            status_code=404,
+        )
+
+    return JSONResponse({"qid": first_qid, "accepted": True})
+
+
+# ------------------------------------------------------------------ #
 # App factory
 # ------------------------------------------------------------------ #
 
@@ -309,7 +352,7 @@ async def get_context(request: Request) -> JSONResponse:
 def create_app(
     manager: PipelineManager | None = None,
 ) -> Starlette:
-    """Create the Starlette application with all 9 endpoints."""
+    """Create the Starlette application with all 9 endpoints plus DoD §11.11.5 aliases."""
     global _manager  # noqa: PLW0603
     _manager = manager or PipelineManager()
 
@@ -327,6 +370,10 @@ def create_app(
         ),
         Route("/pipelines/{id}/checkpoint", get_checkpoint, methods=["GET"]),
         Route("/pipelines/{id}/context", get_context, methods=["GET"]),
+        # DoD §11.11.5 aliases
+        Route("/run", start_pipeline, methods=["POST"]),
+        Route("/status/{id}", get_pipeline, methods=["GET"]),
+        Route("/answer/{id}", _answer_first_question, methods=["POST"]),
     ]
 
     app = Starlette(routes=routes)

@@ -1951,3 +1951,180 @@ class TestToolHandlerToolCommand:
             result = await handler.execute(node, ctx, graph, None, None)
 
         assert result.status == Outcome.SUCCESS
+
+# §11.11.5: DoD alias routes -- GET /status/{id}
+# ================================================================== #
+
+
+class TestDoDRouteAliases:
+    """§11.11.5: HTTP server must expose /run, /status/{id}, /answer/{id} aliases."""
+
+    def test_status_alias_returns_404_for_unknown_pipeline(self):
+        """GET /status/{id} returns 404 when the pipeline does not exist."""
+        from starlette.testclient import TestClient
+
+        from attractor_server.app import create_app
+        from attractor_server.pipeline_manager import PipelineManager
+
+        app = create_app(manager=PipelineManager())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        response = client.get("/status/nonexistent-pipeline-id")
+        assert response.status_code == 404
+        assert "not found" in response.json().get("error", "").lower()
+
+    def test_run_alias_exists(self):
+        """POST /run is wired; a bad-body request returns 400 (not 404/405)."""
+        from starlette.testclient import TestClient
+
+        from attractor_server.app import create_app
+        from attractor_server.pipeline_manager import PipelineManager
+
+        app = create_app(manager=PipelineManager())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        response = client.post("/run", json={})  # missing dot_source
+        assert response.status_code == 400
+
+    def test_answer_alias_returns_404_for_unknown_pipeline(self):
+        """POST /answer/{id} returns 404 when the pipeline does not exist."""
+        from starlette.testclient import TestClient
+
+        from attractor_server.app import create_app
+        from attractor_server.pipeline_manager import PipelineManager
+
+        app = create_app(manager=PipelineManager())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        response = client.post("/answer/no-such-id", json={"answer": "yes"})
+        assert response.status_code == 404
+
+
+# ================================================================== #
+# §9.4.1: ExecutionEnvironment.platform() / working_directory()
+# ================================================================== #
+
+
+class TestExecutionEnvironmentIntrospection:
+    """§9.4.1: LocalEnvironment must expose platform(), os_version(), working_directory()."""
+
+    def test_platform_returns_non_empty_string(self):
+        """LocalEnvironment.platform() returns a non-empty string."""
+        from attractor_agent.environment import LocalEnvironment
+
+        env = LocalEnvironment()
+        result = env.platform()
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_os_version_returns_non_empty_string(self):
+        """LocalEnvironment.os_version() returns a non-empty string."""
+        from attractor_agent.environment import LocalEnvironment
+
+        env = LocalEnvironment()
+        result = env.os_version()
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_working_directory_returns_current_directory(self):
+        """LocalEnvironment.working_directory() returns the current working directory."""
+        import os
+
+        from attractor_agent.environment import LocalEnvironment
+
+        env = LocalEnvironment()
+        result = await env.working_directory()
+        assert isinstance(result, str)
+        assert len(result) > 0
+        # Must match os.getcwd() when no working_dir override is set
+        assert result == os.getcwd()
+
+    @pytest.mark.asyncio
+    async def test_working_directory_honours_override(self):
+        """When working_dir is supplied, working_directory() returns that path."""
+        import tempfile
+
+        from attractor_agent.environment import LocalEnvironment
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = LocalEnvironment(working_dir=tmp)
+            result = await env.working_directory()
+            assert result == tmp
+
+
+# ================================================================== #
+# §9.8.2: knowledge_cutoff wired from ModelInfo through env block
+# ================================================================== #
+
+
+class TestKnowledgeCutoffWiring:
+    """§9.8.2: ModelInfo.knowledge_cutoff is populated and surfaced in the env block."""
+
+    def test_model_info_has_knowledge_cutoff_field(self):
+        """ModelInfo dataclass must have a knowledge_cutoff attribute."""
+        from attractor_llm.catalog import ModelInfo
+
+        info = ModelInfo(
+            id="test-model",
+            provider="test",
+            display_name="Test",
+            context_window=8192,
+            knowledge_cutoff="2024-08",
+        )
+        assert info.knowledge_cutoff == "2024-08"
+
+    def test_model_info_knowledge_cutoff_defaults_to_none(self):
+        """knowledge_cutoff defaults to None for models where it is not set."""
+        from attractor_llm.catalog import ModelInfo
+
+        info = ModelInfo(
+            id="test-model",
+            provider="test",
+            display_name="Test",
+            context_window=8192,
+        )
+        assert info.knowledge_cutoff is None
+
+    def test_catalog_models_have_knowledge_cutoff(self):
+        """All catalog models with known cutoffs should have the field populated."""
+        from attractor_llm.catalog import get_model_info
+
+        for model_id, expected_cutoff in [
+            ("claude-opus-4-6", "2024-08"),
+            ("claude-sonnet-4-5", "2024-08"),
+            ("gpt-5.2", "2024-04"),
+            ("gemini-3-pro-preview", "2024-12"),
+            ("gemini-3-flash-preview", "2024-12"),
+        ]:
+            info = get_model_info(model_id)
+            assert info is not None, f"Model {model_id} not found in catalog"
+            assert info.knowledge_cutoff == expected_cutoff, (
+                f"{model_id}: expected {expected_cutoff!r}, got {info.knowledge_cutoff!r}"
+            )
+
+    def test_build_environment_context_includes_knowledge_cutoff(self):
+        """build_environment_context() emits 'Knowledge cutoff:' when provided."""
+        from attractor_agent.env_context import build_environment_context
+
+        result = build_environment_context(
+            working_dir="/tmp",
+            model="claude-sonnet-4-5",
+            knowledge_cutoff="2024-08",
+            git_info={"is_git": False, "branch": "", "modified_count": 0,
+                      "untracked_count": 0, "recent_commits": []},
+        )
+        assert "Knowledge cutoff: 2024-08" in result
+
+    def test_build_environment_context_omits_cutoff_when_none(self):
+        """build_environment_context() must NOT emit 'Knowledge cutoff:' when None."""
+        from attractor_agent.env_context import build_environment_context
+
+        result = build_environment_context(
+            working_dir="/tmp",
+            model="claude-sonnet-4-5",
+            knowledge_cutoff=None,
+            git_info={"is_git": False, "branch": "", "modified_count": 0,
+                      "untracked_count": 0, "recent_commits": []},
+        )
+        assert "Knowledge cutoff" not in result

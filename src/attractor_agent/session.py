@@ -789,11 +789,13 @@ class Session:
         if self._config.system_prompt:
             parts.append(self._config.system_prompt)
 
-        # 2. Environment context
-        # TODO: wire knowledge_cutoff from model metadata (catalog) when available
+        # 2. Environment context -- wire knowledge_cutoff from model catalog (Spec §9.8.2)
+        _model_info = get_model_info(self._config.model)
+        _knowledge_cutoff: str | None = _model_info.knowledge_cutoff if _model_info else None
         env_block = build_environment_context(
             working_dir=working_dir,
             model=self._config.model,
+            knowledge_cutoff=_knowledge_cutoff,
             git_info=git_info,
         )
         parts.append(env_block)

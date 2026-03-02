@@ -110,6 +110,18 @@ class ExecutionEnvironment(Protocol):
         """List directory contents."""
         ...
 
+    async def working_directory(self) -> str:
+        """Return the current working directory."""
+        ...
+
+    def platform(self) -> str:
+        """Return the platform string (e.g. 'linux', 'darwin', 'windows')."""
+        ...
+
+    def os_version(self) -> str:
+        """Return the OS version string."""
+        ...
+
     async def start(self) -> None:
         """Initialize the environment (e.g., start container)."""
         ...
@@ -158,11 +170,13 @@ class LocalEnvironment:
     Behavior is identical to the pre-abstraction tool implementations.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, working_dir: str | None = None) -> None:
         # Callback invoked with the live subprocess.Popen right after spawn,
         # before communicate() blocks. Wired by Session.__init__ for abort tracking.
         # Spec §9.1.6, §9.11.5.
         self._spawn_callback: Any | None = None
+        # Optional working directory override for working_directory(). Spec §9.4.1.
+        self._working_dir: str | None = working_dir
 
     async def read_file(self, path: str) -> str:
         file_path = Path(path).expanduser().resolve()
@@ -264,6 +278,22 @@ class LocalEnvironment:
     async def list_dir(self, path: str) -> list[str]:
         p = Path(path).expanduser().resolve()
         return sorted(str(f.name) for f in p.iterdir())
+
+    async def working_directory(self) -> str:
+        """Return the current working directory of the host."""
+        return str(self._working_dir or Path.cwd())
+
+    def platform(self) -> str:
+        """Return the lowercase platform name (e.g. 'linux', 'darwin')."""
+        import sys
+
+        return sys.platform.lower()
+
+    def os_version(self) -> str:
+        """Return the OS version string from the platform module."""
+        import platform as _platform
+
+        return _platform.version()
 
     async def start(self) -> None:
         pass  # No-op for local
@@ -442,6 +472,19 @@ class DockerEnvironment:
         if result.returncode != 0:
             raise OSError(f"Failed to list {path}: {result.stderr}")
         return sorted(result.stdout.strip().split("\n")) if result.stdout.strip() else []
+
+    async def working_directory(self) -> str:
+        """Return the working directory inside the container."""
+        result = await self.exec_shell("pwd")
+        return result.stdout.strip()
+
+    def platform(self) -> str:
+        """Return 'docker' as the platform identifier."""
+        return "docker"
+
+    def os_version(self) -> str:
+        """Return 'docker' as the OS version placeholder."""
+        return "docker"
 
     def _check_running(self) -> None:
         if not self._container_id:
