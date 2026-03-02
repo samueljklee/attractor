@@ -81,7 +81,8 @@ class SessionConfig:
     provider: str | None = None
     system_prompt: str = ""
     max_turns: int = 0  # 0 = unlimited (spec §9 SessionConfig)
-    max_tool_rounds_per_turn: int = 0  # 0 = unlimited (spec §9 SessionConfig)
+    max_tool_rounds_per_input: int = 0  # 0 = unlimited (spec §9 SessionConfig)
+
     temperature: float | None = None
     reasoning_effort: str | None = None
     provider_options: dict[str, Any] | None = None
@@ -106,6 +107,34 @@ class SessionConfig:
     # Execution environment: "local" (default) or "docker"
     environment: str = "local"
     docker_image: str = "python:3.12-slim"
+
+    # ------------------------------------------------------------------ #
+    # Deprecated aliases (all fields above; methods / properties below)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def max_tool_rounds_per_turn(self) -> int:
+        """Deprecated: use max_tool_rounds_per_input. Will be removed in a future version."""
+        import warnings
+
+        warnings.warn(
+            "max_tool_rounds_per_turn is deprecated; use max_tool_rounds_per_input instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.max_tool_rounds_per_input
+
+    @max_tool_rounds_per_turn.setter
+    def max_tool_rounds_per_turn(self, value: int) -> None:
+        """Deprecated setter: use max_tool_rounds_per_input. Will be removed in a future version."""
+        import warnings
+
+        warnings.warn(
+            "max_tool_rounds_per_turn is deprecated; use max_tool_rounds_per_input instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.max_tool_rounds_per_input = value
 
 
 @dataclass
@@ -522,15 +551,15 @@ class Session:
 
             # Check tool round limit
             if (
-                self._config.max_tool_rounds_per_turn > 0
-                and tool_round >= self._config.max_tool_rounds_per_turn
+                self._config.max_tool_rounds_per_input > 0
+                and tool_round >= self._config.max_tool_rounds_per_input
             ):
                 await self._emitter.emit(
                     SessionEvent(
                         kind=EventKind.TURN_LIMIT,
                         data={
                             "limit": "max_tool_rounds",
-                            "value": self._config.max_tool_rounds_per_turn,
+                            "value": self._config.max_tool_rounds_per_input,
                         },
                     )
                 )

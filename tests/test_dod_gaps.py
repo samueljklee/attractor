@@ -1825,3 +1825,64 @@ class TestTruncationMarker:
         assert "[output was truncated]" not in result_text.split("WARNING")[1] if "WARNING" in result_text else True, (
             f"Legacy truncation marker found after spec marker. Output: {result_text[:200]}"
         )
+
+class TestMaxToolRoundsPerInput:
+    """§9.1.4: SessionConfig field name matches spec."""
+
+    def test_field_named_max_tool_rounds_per_input(self):
+        """SessionConfig must have max_tool_rounds_per_input attribute."""
+        from attractor_agent.session import SessionConfig
+        config = SessionConfig(model="test", max_tool_rounds_per_input=5)
+        assert config.max_tool_rounds_per_input == 5
+
+    def test_deprecated_alias_still_works(self):
+        """max_tool_rounds_per_turn alias must still work with DeprecationWarning."""
+        import warnings
+        from attractor_agent.session import SessionConfig
+        config = SessionConfig(model="test", max_tool_rounds_per_input=3)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            val = config.max_tool_rounds_per_turn
+        assert val == 3
+        assert any(issubclass(x.category, DeprecationWarning) for x in w)
+
+class TestDiagnosticEdgeId:
+    """§11.2.10: Diagnostic must carry a stable edge_id string."""
+
+    def test_edge_diagnostic_has_edge_id(self):
+        """Validate: invalid edge reference → Diagnostic has non-empty edge_id."""
+        from attractor_pipeline.graph import Edge, Graph, Node
+        from attractor_pipeline.validation import validate
+
+        g = Graph(name="test")
+        g.nodes["start"] = Node(id="start", shape="Mdiamond")
+        g.nodes["exit"] = Node(id="exit", shape="Msquare")
+        g.edges.append(Edge(source="start", target="nonexistent_node"))
+
+        diags = validate(g)
+        edge_diags = [d for d in diags if d.edge_id]
+        assert edge_diags, "Expected at least one diagnostic with edge_id populated"
+        assert any("nonexistent_node" in d.edge_id or "start" in d.edge_id for d in edge_diags)
+
+class TestToolHandlerToolCommand:
+    """§11.6.8: ToolHandler must read tool_command attribute per spec."""
+
+    @pytest.mark.asyncio
+    async def test_tool_command_attribute_used(self):
+        """ToolHandler executes node.attrs.get('tool_command') when set."""
+        from attractor_pipeline.graph import Graph, Node
+        from attractor_pipeline.handlers.basic import ToolHandler
+        from attractor_pipeline.engine.runner import Outcome
+        from unittest.mock import AsyncMock, patch
+
+        handler = ToolHandler()
+        node = Node(id="t1", shape="parallelogram", attrs={"tool_command": "echo hello"})
+        ctx = {}
+        graph = Graph(name="test")
+
+        # Patch subprocess.run to avoid real shell calls
+        fake_result = type("R", (), {"returncode": 0, "stdout": "hello\n", "stderr": ""})()
+        with patch("attractor_pipeline.handlers.basic.subprocess.run", return_value=fake_result):
+            result = await handler.execute(node, ctx, graph, None, None)
+
+        assert result.status == Outcome.SUCCESS

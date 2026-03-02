@@ -314,7 +314,7 @@ class TestSessionEdgeCases:
         config = SessionConfig(
             model="mock-model",
             provider="mock",
-            max_tool_rounds_per_turn=5,
+            max_tool_rounds_per_input=5,
         )
         session = Session(client=client, config=config, tools=ALL_CORE_TOOLS)
         session.events.on(lambda e: events.append(e.kind))
