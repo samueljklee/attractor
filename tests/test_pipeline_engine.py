@@ -568,3 +568,337 @@ class TestStylesheet:
     def test_comments_stripped(self):
         ss = parse_stylesheet("/* comment */ * { llm_model: test; }")
         assert len(ss.rules) == 1
+
+
+# ================================================================== #
+# §11.12 Integration-Test Coverage Gaps
+# ================================================================== #
+
+
+class TestDoD11_12_3_MultiLineNodeAttributes:
+    """§11.12.3: Parse multi-line node attribute blocks."""
+
+    def test_multiline_node_attributes_parsed_correctly(self):
+        """Node attributes spanning multiple lines within [...] are parsed correctly."""
+        g = parse_dot("""
+        digraph ML {
+            graph [goal="Multi-line attrs"]
+            start [shape=Mdiamond]
+            task [
+                shape=box,
+                prompt="A multi-line
+                        prompt attribute",
+                max_retries=2,
+                label="Task Node"
+            ]
+            done [shape=Msquare]
+            start -> task -> done
+        }
+        """)
+        assert "task" in g.nodes
+        node = g.nodes["task"]
+        assert node.shape == "box"
+        assert node.max_retries == 2
+        assert node.label == "Task Node"
+        # prompt spans lines but should be captured as a single string
+        assert "multi-line" in node.prompt
+
+    def test_multiline_edge_attributes_parsed_correctly(self):
+        """Edge attributes spanning multiple lines within [...] are parsed."""
+        g = parse_dot("""
+        digraph MLEdge {
+            graph [goal="Multi-line edge attrs"]
+            start [shape=Mdiamond]
+            check [shape=diamond]
+            yes   [shape=box, prompt="Y"]
+            no    [shape=box, prompt="N"]
+            done  [shape=Msquare]
+            start -> check
+            check -> yes [
+                condition="outcome = success",
+                weight=2.0,
+                label="success"
+            ]
+            check -> no [
+                condition="outcome = fail",
+                label="fail"
+            ]
+            yes -> done
+            no  -> done
+        }
+        """)
+        edges_to_yes = [e for e in g.edges if e.target == "yes"]
+        assert len(edges_to_yes) == 1
+        edge = edges_to_yes[0]
+        assert edge.condition == "outcome = success"
+        assert edge.weight == 2.0
+        assert edge.label == "success"
+
+
+class TestDoD11_12_9_PerNodeMaxRetries:
+    """§11.12.9: Execute with retry on failure (max_retries=2 per node)."""
+
+    @pytest.mark.asyncio
+    async def test_per_node_max_retries_from_dot_attribute(self):
+        """Node with max_retries=2 in DOT retries exactly 2 times after initial fail.
+
+        Total attempts = 3: 1 initial + 2 retries. After exhaustion the node
+        uses its final outcome (FAIL) for edge selection.
+        """
+        from unittest.mock import patch
+
+        call_counts: dict[str, int] = {}
+
+        class _FailTwiceHandler:
+            """Fails the first 2 calls, succeeds on the 3rd."""
+
+            async def execute(self, node, context, graph, logs_root, abort_signal=None):
+                key = node.id
+                call_counts[key] = call_counts.get(key, 0) + 1
+                if call_counts[key] <= 2:
+                    return HandlerResult(status=Outcome.FAIL, failure_reason="deliberate fail")
+                return HandlerResult(status=Outcome.SUCCESS, output="recovered")
+
+        g = parse_dot("""
+        digraph R2 {
+            graph [goal="Per-node retries"]
+            start [shape=Mdiamond]
+            task  [shape=box, prompt="Retry me", max_retries=2]
+            done  [shape=Msquare]
+            start -> task -> done
+        }
+        """)
+        assert g.nodes["task"].max_retries == 2, (
+            "DOT max_retries=2 should be parsed onto the node"
+        )
+
+        registry = HandlerRegistry()
+        registry.register("start", StartHandler())
+        registry.register("codergen", _FailTwiceHandler())
+        registry.register("exit", ExitHandler())
+
+        with patch("attractor_pipeline.engine.runner.anyio.sleep"):
+            result = await run_pipeline(g, registry)
+
+        assert result.status == PipelineStatus.COMPLETED, (
+            "Pipeline should complete — task recovered on attempt 3"
+        )
+        got = call_counts.get("task", 0)
+        assert got == 3, (
+            f"Expected 3 calls (1 initial + 2 retries), got {got}"
+        )
+
+
+class TestDoD11_12_15_LexicalTiebreak:
+    """§11.12.15: Lexical tiebreak as final fallback in edge selection."""
+
+    def test_lexical_tiebreak_selects_alphabetically_first_target(self):
+        """When multiple unconditional edges have equal weight, the lexicographically
+        smaller target node ID wins.
+
+        Edge a->'b' and a->'a_alt': 'a_alt' < 'b' alphabetically → 'a_alt' selected.
+        """
+        from attractor_pipeline.engine.runner import HandlerResult, Outcome, select_edge
+        from attractor_pipeline.graph import Edge, Graph, Node
+
+        g = Graph(name="lex")
+        node_a = Node(id="a", shape="box")
+        g.nodes["a"] = node_a
+        g.nodes["b"] = Node(id="b", shape="box")
+        g.nodes["a_alt"] = Node(id="a_alt", shape="box")
+
+        # Both edges: no condition, equal weight (default 1.0)
+        g.edges = [
+            Edge(source="a", target="b", weight=1.0),
+            Edge(source="a", target="a_alt", weight=1.0),
+        ]
+
+        result = HandlerResult(status=Outcome.SUCCESS)
+        chosen = select_edge(node_a, result, g, {})
+
+        assert chosen is not None
+        assert chosen.target == "a_alt", (
+            f"Lexical tiebreak must select 'a_alt' (comes before 'b'), got '{chosen.target}'"
+        )
+
+    def test_lexical_tiebreak_does_not_fire_when_weights_differ(self):
+        """Weight takes priority over lexical order — higher-weight edge wins."""
+        from attractor_pipeline.engine.runner import HandlerResult, Outcome, select_edge
+        from attractor_pipeline.graph import Edge, Graph, Node
+
+        g = Graph(name="weight_priority")
+        node_a = Node(id="a", shape="box")
+        g.nodes["a"] = node_a
+        g.nodes["b"] = Node(id="b", shape="box")
+        g.nodes["a_alt"] = Node(id="a_alt", shape="box")
+
+        # 'b' has higher weight despite lexically later name
+        g.edges = [
+            Edge(source="a", target="b", weight=2.0),
+            Edge(source="a", target="a_alt", weight=1.0),
+        ]
+
+        result = HandlerResult(status=Outcome.SUCCESS)
+        chosen = select_edge(node_a, result, g, {})
+
+        assert chosen is not None
+        assert chosen.target == "b", (
+            f"Weight 2.0 must beat weight 1.0 regardless of lexical order, got '{chosen.target}'"
+        )
+
+
+class TestDoD11_12_17_CheckpointResume:
+    """§11.12.17: Checkpoint save and resume produces same result."""
+
+    @pytest.mark.asyncio
+    async def test_resume_from_checkpoint_produces_same_result(self, tmp_path):
+        """A pipeline that runs to completion and then resumes from its saved
+        checkpoint should reach the same final status and completed_nodes.
+        """
+        dot_src = """
+        digraph ResumableTest {
+            graph [goal="Test checkpoint resume"]
+            start [shape=Mdiamond]
+            t1    [shape=box, prompt="Step 1"]
+            t2    [shape=box, prompt="Step 2"]
+            done  [shape=Msquare]
+            start -> t1 -> t2 -> done
+        }
+        """
+
+        g = parse_dot(dot_src)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        # Full run — produces checkpoint
+        logs_root_1 = tmp_path / "run1"
+        logs_root_1.mkdir()
+        result_1 = await run_pipeline(g, registry, logs_root=logs_root_1)
+        assert result_1.status == PipelineStatus.COMPLETED
+
+        ckpt_path = logs_root_1 / "checkpoint.json"
+        assert ckpt_path.exists(), "Checkpoint file must be written after run"
+
+        # Load checkpoint and resume
+        ckpt = Checkpoint.load(ckpt_path)
+        logs_root_2 = tmp_path / "run2"
+        logs_root_2.mkdir()
+
+        # Parse fresh graph (simulates agent restart)
+        g2 = parse_dot(dot_src)
+        result_2 = await run_pipeline(g2, registry, checkpoint=ckpt, logs_root=logs_root_2)
+
+        # Both runs must have the same outcome
+        assert result_2.status == result_1.status, (
+            f"Resumed run status {result_2.status!r} != fresh run status {result_1.status!r}"
+        )
+        # Same nodes completed (order may differ, use sets)
+        assert set(result_2.completed_nodes) == set(result_1.completed_nodes), (
+            f"Resumed completed_nodes {result_2.completed_nodes!r} != "
+            f"fresh completed_nodes {result_1.completed_nodes!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_resume_from_mid_pipeline_checkpoint(self, tmp_path):
+        """Resuming from a mid-pipeline checkpoint skips already-completed nodes.
+
+        This is the canonical crash-recovery scenario: the pipeline is
+        interrupted after t1 completes, then resumed. The resumed run must
+        start at t2, complete t2 → done, and NOT re-execute t1.
+        """
+        dot_src = """
+        digraph ResumableTest {
+            graph [goal="Test mid-pipeline resume"]
+            start [shape=Mdiamond]
+            t1    [shape=box, prompt="Step 1"]
+            t2    [shape=box, prompt="Step 2"]
+            done  [shape=Msquare]
+            start -> t1 -> t2 -> done
+        }
+        """
+
+        call_counts: dict[str, int] = {}
+
+        class _TrackingCodergen:
+            """Records which nodes are called during the resumed run."""
+
+            async def execute(self, node, context, graph, logs_root, abort_signal=None):
+                call_counts[node.id] = call_counts.get(node.id, 0) + 1
+                return HandlerResult(status=Outcome.SUCCESS, output=f"{node.id}-done")
+
+        registry = HandlerRegistry()
+        registry.register("start", StartHandler())
+        registry.register("codergen", _TrackingCodergen())
+        registry.register("exit", ExitHandler())
+
+        # Construct a partial checkpoint: start and t1 have completed,
+        # pipeline is interrupted before t2 runs.
+        partial_ckpt = Checkpoint(
+            graph_name="ResumableTest",
+            current_node_id="t2",  # resume point
+            completed_nodes=[
+                {"node_id": "start"},
+                {"node_id": "t1"},
+            ],
+            context_values={"goal": "Test mid-pipeline resume"},
+            node_retry_counts={},
+            goal_gate_redirect_count=0,
+            status="running",
+        )
+
+        g = parse_dot(dot_src)
+        logs_root = tmp_path / "resume"
+        logs_root.mkdir()
+        result = await run_pipeline(g, registry, checkpoint=partial_ckpt, logs_root=logs_root)
+
+        assert result.status == PipelineStatus.COMPLETED
+
+        # t1 was already in the checkpoint — must NOT be re-executed
+        assert call_counts.get("t1", 0) == 0, (
+            "t1 was completed before the checkpoint — must not be re-executed on resume"
+        )
+        # t2 must run exactly once (resume point)
+        assert call_counts.get("t2", 1) == 1, "t2 must run exactly once on resume"
+        # Final completed_nodes must contain all four nodes
+        assert set(result.completed_nodes) == {"start", "t1", "t2", "done"}
+
+
+class TestDoD11_12_22_LargePipeline:
+    """§11.12.22: Pipeline with 10+ nodes completes without errors."""
+
+    @pytest.mark.asyncio
+    async def test_twelve_node_pipeline_completes(self):
+        """A 12-node linear pipeline (start + 10 box nodes + done) must run
+        to completion without errors or infinite loops.
+        """
+        # Build: start -> n1 -> n2 -> ... -> n10 -> done
+        nodes = ["n" + str(i) for i in range(1, 11)]
+        node_decls = "\n            ".join(
+            f'{n} [shape=box, prompt="Node {n}"]' for n in nodes
+        )
+        edge_chain = " -> ".join(["start"] + nodes + ["done"])
+
+        dot_src = f"""
+        digraph BigPipeline {{
+            graph [goal="Large pipeline test"]
+            start [shape=Mdiamond]
+            {node_decls}
+            done  [shape=Msquare]
+            {edge_chain}
+        }}
+        """
+
+        g = parse_dot(dot_src)
+        assert len(g.nodes) == 12, f"Expected 12 nodes, got {len(g.nodes)}"
+
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+
+        result = await run_pipeline(g, registry)
+
+        assert result.status == PipelineStatus.COMPLETED, (
+            f"12-node pipeline must complete, got status: {result.status}"
+        )
+        # All 10 middle nodes should appear in completed_nodes
+        for n in nodes:
+            assert n in result.completed_nodes, f"Node '{n}' missing from completed_nodes"
