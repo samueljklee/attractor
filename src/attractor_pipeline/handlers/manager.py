@@ -57,7 +57,7 @@ class ManagerHandler:
         child_graph: Path to a .dot file OR inline DOT string
         prompt: Evaluation prompt (used to assess child output)
         max_iterations: Max supervisor retry cycles (default: 3)
-        success_condition: Context key=value to check (default: status=completed)
+        success_condition: Context key=value to check (default: status=success)
     """
 
     def __init__(
@@ -103,7 +103,7 @@ class ManagerHandler:
             )
 
         max_iterations = int(node.attrs.get("max_iterations", "3"))
-        success_condition = node.attrs.get("success_condition", "status=completed")
+        success_condition = node.attrs.get("success_condition", "status=success")
 
         # Supervisor loop
         iteration = 0

@@ -242,10 +242,10 @@ def select_edge(
 
 
 class PipelineStatus(StrEnum):
-    """Final pipeline execution status."""
+    """Pipeline execution outcome. Values match spec §11.3.8."""
 
-    COMPLETED = "completed"
-    FAILED = "failed"
+    COMPLETED = "success"    # spec §11.3.8
+    FAILED = "fail"          # spec §11.3.8
     CANCELLED = "cancelled"
 
 
@@ -496,9 +496,12 @@ def _write_node_artifacts(
         if prompt:
             (node_dir / "prompt.md").write_text(prompt, encoding="utf-8")
 
-        # response.md -- handler output text (if any)
-        if result.output:
-            (node_dir / "response.md").write_text(result.output, encoding="utf-8")
+        # response.md -- write for codergen nodes even if output is empty to match spec §5.6
+        # Also check context for output stored by CodergenHandler
+        response_text = result.output or context.get(f"codergen.{node.id}.output", "")
+        has_prompt_artifact = bool(prompt)  # prompt.md was written
+        if response_text or has_prompt_artifact:
+            (node_dir / "response.md").write_text(response_text or "", encoding="utf-8")
     except Exception:  # noqa: BLE001
         # Artifact writing is observability, not core logic.
         # Don't let I/O errors tank the pipeline.

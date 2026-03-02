@@ -166,7 +166,7 @@ class TestManagerHandler:
         iterations = result.context.get("manager.mgr.iterations")
         assert iterations is not None
         assert len(iterations) >= 1
-        assert iterations[0]["status"] == "completed"
+        assert iterations[0]["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_manager_max_iterations(self, tmp_path):
@@ -188,7 +188,7 @@ class TestManagerHandler:
                     attrs={
                         "child_graph": str(child_file),
                         "max_iterations": "2",
-                        "success_condition": "status=completed",
+                        "success_condition": "status=success",
                     },
                 ),
                 "done": Node(id="done", shape="Msquare"),
