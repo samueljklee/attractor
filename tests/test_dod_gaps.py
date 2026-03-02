@@ -1100,3 +1100,385 @@ class _OutcomeHandlerWithContext:
 
     async def execute(self, node, context, graph, logs_root, abort_signal) -> HandlerResult:
         return HandlerResult(status=self._status, output="done", context_updates=self._updates)
+
+
+# ================================================================== #
+# Fix 1: §9.10.1 — Emit text events alongside tool calls
+# ================================================================== #
+
+
+class TestInterleavedTextWithToolCalls:
+    """§9.10.1: ASSISTANT_TEXT_* events must be emitted even when the response
+    also contains tool calls (interleaved text + tool call in one response)."""
+
+    @pytest.mark.asyncio
+    async def test_interleaved_text_emitted_alongside_tool_calls(self):
+        """When the model returns text AND tool calls in the same response,
+        ASSISTANT_TEXT_START / DELTA / END must all be emitted before the
+        tool round executes."""
+        from attractor_agent.events import EventKind
+        from attractor_agent.session import Session, SessionConfig
+        from attractor_llm.types import ContentPartKind, FinishReason
+
+        # Build a response that carries BOTH a text part and a tool-call part
+        interleaved_response = Response(
+            id="mock-interleaved",
+            model="mock-model",
+            provider="mock",
+            message=Message(
+                role=Role.ASSISTANT,
+                content=[
+                    ContentPart(kind=ContentPartKind.TEXT, text="I'll check that for you"),
+                    ContentPart.tool_call_part("tc-1", "echo_tool", {"msg": "hello"}),
+                ],
+            ),
+            finish_reason=FinishReason.TOOL_CALLS,
+            usage=Usage(input_tokens=10, output_tokens=15),
+        )
+        final_response = make_text_response("Done!")
+
+        adapter = MockAdapter(responses=[interleaved_response, final_response])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        async def echo_tool(msg: str = "") -> str:
+            return f"echo: {msg}"
+
+        tool = Tool(name="echo_tool", description="echo", execute=echo_tool)
+        config = SessionConfig(model="mock-model", provider="mock")
+
+        emitted_kinds: list[str] = []
+        captured_events: list[Any] = []
+
+        def _capture(evt: Any) -> None:
+            emitted_kinds.append(str(evt.kind))
+            captured_events.append(evt)
+
+        async with Session(client=client, config=config, tools=[tool]) as session:
+            session.events.on(_capture)
+            await session.submit("do it")
+
+        # 1. All three event kinds must be emitted
+        assert str(EventKind.ASSISTANT_TEXT_START) in emitted_kinds, (
+            f"ASSISTANT_TEXT_START not emitted. Got: {emitted_kinds}"
+        )
+        assert str(EventKind.ASSISTANT_TEXT_DELTA) in emitted_kinds, (
+            f"ASSISTANT_TEXT_DELTA not emitted. Got: {emitted_kinds}"
+        )
+        assert str(EventKind.ASSISTANT_TEXT_END) in emitted_kinds, (
+            f"ASSISTANT_TEXT_END not emitted. Got: {emitted_kinds}"
+        )
+
+        # 2. Ordering: text events must appear BEFORE the first TOOL_CALL_OUTPUT_DELTA.
+        #    This proves the interleaved branch fired (not just the final-text response).
+        text_start_idx = emitted_kinds.index(str(EventKind.ASSISTANT_TEXT_START))
+        tool_output_idx = emitted_kinds.index(str(EventKind.TOOL_CALL_OUTPUT_DELTA))
+        assert text_start_idx < tool_output_idx, (
+            f"ASSISTANT_TEXT_START ({text_start_idx}) must come before "
+            f"TOOL_CALL_OUTPUT_DELTA ({tool_output_idx}). Got: {emitted_kinds}"
+        )
+
+        # 3. Delta content must match the model's interleaved text
+        delta_events = [e for e in captured_events if str(e.kind) == str(EventKind.ASSISTANT_TEXT_DELTA)]
+        assert delta_events, "No ASSISTANT_TEXT_DELTA events captured"
+        assert delta_events[0].data.get("delta") == "I'll check that for you", (
+            f"Unexpected delta content: {delta_events[0].data}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_text_events_when_response_has_no_text(self):
+        """Tool-call-only response (no TEXT part) must NOT emit ASSISTANT_TEXT_* events."""
+        from attractor_agent.events import EventKind
+        from attractor_agent.session import Session, SessionConfig
+        from attractor_llm.types import ContentPartKind, FinishReason
+
+        # Response with tool call only — no TEXT content part
+        tool_only_response = Response(
+            id="mock-tool-only",
+            model="mock-model",
+            provider="mock",
+            message=Message(
+                role=Role.ASSISTANT,
+                content=[
+                    ContentPart.tool_call_part("tc-1", "echo_tool", {"msg": "hello"}),
+                ],
+            ),
+            finish_reason=FinishReason.TOOL_CALLS,
+            usage=Usage(input_tokens=5, output_tokens=5),
+        )
+        final_response = make_text_response("Done!")
+
+        adapter = MockAdapter(responses=[tool_only_response, final_response])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        async def echo_tool(msg: str = "") -> str:
+            return f"echo: {msg}"
+
+        tool = Tool(name="echo_tool", description="echo", execute=echo_tool)
+        config = SessionConfig(model="mock-model", provider="mock")
+
+        emitted_kinds: list[str] = []
+
+        def _capture(evt: Any) -> None:
+            emitted_kinds.append(str(evt.kind))
+
+        async with Session(client=client, config=config, tools=[tool]) as session:
+            session.events.on(_capture)
+            await session.submit("do it")
+
+        # TOOL_CALL_OUTPUT_DELTA must be present (tool ran)
+        assert str(EventKind.TOOL_CALL_OUTPUT_DELTA) in emitted_kinds
+
+        # Before the first TOOL_CALL_OUTPUT_DELTA, no text events should appear
+        tool_output_idx = emitted_kinds.index(str(EventKind.TOOL_CALL_OUTPUT_DELTA))
+        text_events_before_tool = [
+            k for k in emitted_kinds[:tool_output_idx]
+            if k in (
+                str(EventKind.ASSISTANT_TEXT_START),
+                str(EventKind.ASSISTANT_TEXT_DELTA),
+                str(EventKind.ASSISTANT_TEXT_END),
+            )
+        ]
+        assert not text_events_before_tool, (
+            f"No text events should appear before tool execution when "
+            f"response has no text. Got: {text_events_before_tool}"
+        )
+
+
+# ================================================================== #
+# Fix 2: §8.1.6 — Wire self._middleware in Client.complete() / stream()
+# ================================================================== #
+
+
+class _CallCountMiddleware:
+    """Middleware that tracks both before_request and after_response calls."""
+
+    def __init__(self) -> None:
+        self.before_count = 0
+        self.after_count = 0
+
+    async def before_request(self, request: Any) -> Any:
+        self.before_count += 1
+        return request
+
+    async def after_response(self, request: Any, response: Any) -> Any:
+        self.after_count += 1
+        return response
+
+
+class _OrderRecordMiddleware:
+    """Records call order for verifying middleware execution sequence."""
+
+    def __init__(self, name: str, log: list) -> None:
+        self.name = name
+        self.log = log
+
+    async def before_request(self, request: Any) -> Any:
+        self.log.append(f"{self.name}.before_request")
+        return request
+
+    async def after_response(self, request: Any, response: Any) -> Any:
+        self.log.append(f"{self.name}.after_response")
+        return response
+
+
+class TestClientConstructorMiddleware:
+    """§8.1.6: Client(middleware=[...]) should apply middleware on complete()
+    and stream(), even though the constructor pattern is deprecated."""
+
+    @pytest.mark.asyncio
+    async def test_middleware_applied_on_complete(self):
+        """complete() must call both before_request and after_response."""
+        import warnings
+
+        mw = _CallCountMiddleware()
+        adapter = MockAdapter(responses=[make_text_response("hello")])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            client = Client(middleware=[mw])
+
+        client.register_adapter("mock", adapter)
+
+        request = Request(model="mock-model", provider="mock", messages=[Message.user("hi")])
+        await client.complete(request)
+
+        assert mw.before_count == 1, (
+            f"before_request should be called once, got {mw.before_count}"
+        )
+        assert mw.after_count == 1, (
+            f"after_response should be called once, got {mw.after_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_middleware_applied_on_stream(self):
+        """stream() must call before_request and after_response (deferred until consumed)."""
+        import warnings
+
+        mw = _CallCountMiddleware()
+        adapter = MockAdapter(responses=[make_text_response("streamed")])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            client = Client(middleware=[mw])
+
+        client.register_adapter("mock", adapter)
+
+        request = Request(model="mock-model", provider="mock", messages=[Message.user("hi")])
+        stream = await client.stream(request)
+
+        # before_request fires at stream() call time
+        assert mw.before_count == 1, f"before_request expected 1 call before consume, got {mw.before_count}"
+        # after_response fires only after stream is fully consumed
+        assert mw.after_count == 0, f"after_response must NOT fire before stream is consumed, got {mw.after_count}"
+
+        async for _ in stream:
+            pass
+
+        assert mw.after_count == 1, (
+            f"after_response should be called once after full stream consumption, got {mw.after_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_middleware_ordering_forward_before_reverse_after(self):
+        """Two middlewares: before_request fires A→B, after_response fires B→A."""
+        import warnings
+
+        call_log: list[str] = []
+        mw_a = _OrderRecordMiddleware("A", call_log)
+        mw_b = _OrderRecordMiddleware("B", call_log)
+        adapter = MockAdapter(responses=[make_text_response("ok")])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            client = Client(middleware=[mw_a, mw_b])
+
+        client.register_adapter("mock", adapter)
+        request = Request(model="mock-model", provider="mock", messages=[Message.user("hi")])
+        await client.complete(request)
+
+        assert call_log == [
+            "A.before_request",
+            "B.before_request",
+            "B.after_response",
+            "A.after_response",
+        ], f"Unexpected middleware call order: {call_log}"
+
+    def test_constructor_emits_deprecation_warning(self):
+        """Client(middleware=[...]) must emit DeprecationWarning."""
+        import warnings
+
+        mw = _CallCountMiddleware()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            Client(middleware=[mw])
+
+        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert deprecation_warnings, "Expected DeprecationWarning when passing middleware= to Client()"
+        assert "apply_middleware" in str(deprecation_warnings[0].message).lower() or \
+               "deprecated" in str(deprecation_warnings[0].message).lower()
+
+
+# ================================================================== #
+# Fix 3: §8.1.7 — client optional in generate / stream / generate_object
+# ================================================================== #
+
+
+class TestGenerateWithDefaultClient:
+    """§8.1.7: generate() / stream() / generate_object() must accept omitting
+    client and fall back to the module-level default client."""
+
+    @pytest.mark.asyncio
+    async def test_generate_uses_default_client_when_omitted(self):
+        """generate(model=..., prompt=...) without client uses set_default_client()."""
+        import attractor_llm.client as client_mod
+        from attractor_llm.client import set_default_client
+        from attractor_llm.generate import generate as llm_generate
+
+        adapter = MockAdapter(responses=[make_text_response("from default client")])
+        default_client = Client()
+        default_client.register_adapter("mock", adapter)
+
+        saved = client_mod._default_client
+        try:
+            set_default_client(default_client)
+            # No 'client' positional argument — must not raise TypeError
+            result = await llm_generate(model="mock-model", prompt="hello", provider="mock")
+            assert result == "from default client", f"Unexpected result: {result}"
+        finally:
+            client_mod._default_client = saved
+
+    @pytest.mark.asyncio
+    async def test_generate_object_uses_default_client_when_omitted(self):
+        """generate_object(model=..., prompt=...) without client uses default."""
+        import attractor_llm.client as client_mod
+        from attractor_llm.client import set_default_client
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        adapter = MockAdapter(responses=[make_text_response('{"key": "value"}')])
+        default_client = Client()
+        default_client.register_adapter("mock", adapter)
+
+        saved = client_mod._default_client
+        try:
+            set_default_client(default_client)
+            result = await llm_generate_object(
+                model="mock-model",
+                prompt="extract entities",
+                provider="mock",
+            )
+            assert result.parsed_object == {"key": "value"}
+        finally:
+            client_mod._default_client = saved
+
+    @pytest.mark.asyncio
+    async def test_stream_uses_default_client_when_omitted(self):
+        """stream(model=..., prompt=...) without client uses the default client."""
+        import attractor_llm.client as client_mod
+        from attractor_llm.client import set_default_client
+        from attractor_llm.generate import stream as llm_stream
+
+        adapter = MockAdapter(responses=[make_text_response("streamed text")])
+        default_client = Client()
+        default_client.register_adapter("mock", adapter)
+
+        saved = client_mod._default_client
+        try:
+            set_default_client(default_client)
+            result = await llm_stream(model="mock-model", prompt="hello", provider="mock")
+            # Consume the stream
+            text = ""
+            async for chunk in result:
+                text += chunk
+            assert text == "streamed text", f"Unexpected stream text: {text}"
+        finally:
+            client_mod._default_client = saved
+
+    @pytest.mark.asyncio
+    async def test_stream_with_tools_uses_default_client_when_omitted(self):
+        """stream_with_tools(model=..., prompt=...) without client uses default."""
+        import attractor_llm.client as client_mod
+        from attractor_llm.client import set_default_client
+        from attractor_llm.generate import stream_with_tools as llm_stream_with_tools
+
+        adapter = MockAdapter(responses=[make_text_response("streamed with tools")])
+        default_client = Client()
+        default_client.register_adapter("mock", adapter)
+
+        saved = client_mod._default_client
+        try:
+            set_default_client(default_client)
+            # stream_with_tools() is an async function that returns StreamResult
+            result = await llm_stream_with_tools(
+                model="mock-model", prompt="hello", provider="mock"
+            )
+            # Consume as text chunks
+            text = ""
+            async for chunk in result:
+                text += chunk
+            assert text == "streamed with tools", (
+                f"Unexpected stream_with_tools output: {text}"
+            )
+        finally:
+            client_mod._default_client = saved

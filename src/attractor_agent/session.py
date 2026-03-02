@@ -555,6 +555,28 @@ class Session:
             # Check if the model wants to call tools
             tool_calls = response.tool_calls
             if tool_calls:
+                # §9.10.1: Emit text events for any interleaved text the model
+                # produced alongside tool calls (e.g. "I'll check that for you…").
+                _interleaved_text = response.text or ""
+                if _interleaved_text:
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.ASSISTANT_TEXT_START,
+                            data={"turn": self._turn_count},
+                        )
+                    )
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.ASSISTANT_TEXT_DELTA,
+                            data={"delta": _interleaved_text},
+                        )
+                    )
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.ASSISTANT_TEXT_END,
+                            data={"text": _interleaved_text[:500]},
+                        )
+                    )
                 tool_round += 1
 
                 # Execute all tool calls

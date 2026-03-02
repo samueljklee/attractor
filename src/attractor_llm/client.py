@@ -51,8 +51,8 @@ class Client:
         providers: Mapping[str, ProviderAdapter] | None = None,
         default_provider: str | None = None,
         retry_policy: RetryPolicy | None = None,
-        # DEPRECATED: the `middleware` parameter is accepted but never applied.
-        # Client.complete() does not run middleware; use apply_middleware() from
+        # DEPRECATED: the `middleware` parameter is accepted and applied, but
+        # the preferred pattern is to use apply_middleware() from
         # attractor_llm.middleware to wrap the client instead (§8.1.6).
         middleware: list[Middleware] | None = None,
     ) -> None:
@@ -69,7 +69,7 @@ class Client:
                 DeprecationWarning,
                 stacklevel=2,
             )
-        self._middleware = middleware or []  # stored but not applied (see above)
+        self._middleware = middleware or []
         if providers:
             for provider_name, adapter in providers.items():
                 self.register_adapter(provider_name, adapter)
@@ -185,17 +185,47 @@ class Client:
 
         Routes to the appropriate adapter, applies retry policy.
         Checks ``abort_signal`` between retry attempts.
+        Runs middleware before_request / after_response when present (§8.1.6).
         """
-        adapter = self._resolve_adapter(request)
+        # Apply before_request middleware (Spec §8.1.6, registration order)
+        req = request
+        for mw in self._middleware:
+            req = await mw.before_request(req)
+
+        adapter = self._resolve_adapter(req)
 
         async def _do_complete() -> Response:
             if abort_signal is not None and abort_signal.is_set:
                 from attractor_llm.errors import AbortError
 
                 raise AbortError("Request aborted by signal")
-            return await adapter.complete(request)
+            return await adapter.complete(req)
 
-        return await retry_with_policy(_do_complete, self._retry_policy)
+        response = await retry_with_policy(_do_complete, self._retry_policy)
+
+        # Apply after_response middleware (Spec §8.1.6, reverse order)
+        for mw in reversed(self._middleware):
+            response = await mw.after_response(req, response)
+
+        return response
+
+    def _abort_aware_stream(
+        self,
+        raw_stream: Any,
+        abort_signal: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        """Wrap a raw stream to raise AbortError when abort_signal fires. Spec §8.4.9."""
+
+        async def _abort_aware() -> AsyncIterator[StreamEvent]:
+            async for event in raw_stream:  # type: ignore[union-attr]
+                if abort_signal.is_set:
+                    await raw_stream.aclose()  # type: ignore[union-attr]
+                    from attractor_llm.errors import AbortError
+
+                    raise AbortError("Stream aborted by signal")
+                yield event
+
+        return _abort_aware()
 
     async def stream(
         self, request: Request, *, abort_signal: Any | None = None
@@ -208,30 +238,48 @@ class Client:
 
         When ``abort_signal`` is set mid-stream, the underlying HTTP connection
         is closed by calling ``aclose()`` on the async generator. Spec §8.4.9.
+        Runs middleware before_request / after_response when present (§8.1.6).
         """
+        # Apply before_request middleware (Spec §8.1.6)
+        req = request
+        for mw in self._middleware:
+            req = await mw.before_request(req)
+
         if abort_signal is not None and abort_signal.is_set:
             from attractor_llm.errors import AbortError
 
             raise AbortError("Stream aborted by signal")
-        adapter = self._resolve_adapter(request)
-        raw_stream = adapter.stream(request)
 
-        if abort_signal is None:
-            return raw_stream  # type: ignore[return-value]
+        adapter = self._resolve_adapter(req)
+        raw_stream = adapter.stream(req)
 
-        # Wrap stream to check abort_signal on each event and close the
-        # underlying HTTP connection (aclose() propagates into the adapter's
-        # async-with httpx block) when the signal fires. Spec §8.4.9.
-        async def _abort_aware() -> AsyncIterator[StreamEvent]:
-            async for event in raw_stream:  # type: ignore[union-attr]
-                if abort_signal.is_set:
-                    await raw_stream.aclose()  # type: ignore[union-attr]
-                    from attractor_llm.errors import AbortError
+        # If no middleware, use existing abort-aware logic unchanged
+        if not self._middleware:
+            if abort_signal is None:
+                return raw_stream  # type: ignore[return-value]
+            return self._abort_aware_stream(raw_stream, abort_signal)
 
-                    raise AbortError("Stream aborted by signal")
+        # With middleware: wrap the stream so that after_response is called
+        # on the fully-accumulated response once the stream is consumed.
+        # after_response cannot modify already-yielded events, but it lets
+        # middleware observe the completed response (token counting, logging…).
+        mw_list = self._middleware
+        abort = abort_signal
+
+        async def _mw_stream() -> AsyncIterator[StreamEvent]:
+            from attractor_llm.streaming import StreamAccumulator
+
+            acc = StreamAccumulator()
+            source = self._abort_aware_stream(raw_stream, abort) if abort else raw_stream
+            async for event in source:  # type: ignore[union-attr]
+                acc.feed(event)
                 yield event
+            # Stream fully consumed — call after_response for observability
+            completed = acc.response()
+            for mw in reversed(mw_list):
+                completed = await mw.after_response(req, completed)
 
-        return _abort_aware()
+        return _mw_stream()
 
     async def close(self) -> None:
         """Close all registered adapters and release resources."""
