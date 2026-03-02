@@ -376,6 +376,31 @@ class HandlerRegistry:
 # ------------------------------------------------------------------ #
 
 
+def _eval_goal_gate(gate_expr: str, outcome: Outcome, ctx: dict[str, Any]) -> bool:
+    """Evaluate a goal_gate expression, handling boolean literals. Spec §3.2.
+
+    Spec defines goal_gate as a Boolean attribute: goal_gate=true means
+    the node must reach SUCCESS before the pipeline can exit.
+
+    DOT parsers give us goal_gate as a string.  Handle the two special
+    boolean literals first:
+    - "true"  → gate satisfied iff outcome is SUCCESS or PARTIAL_SUCCESS
+    - "false" → gate never active (always passes, same as no gate)
+    - anything else → evaluate as a condition expression
+
+    This prevents the bare-key-lookup bug where 'true' resolved to ''
+    (falsy), causing goal_gate=true to block exit even on success.
+    """
+    normalized = gate_expr.strip().lower()
+    if normalized == "true":
+        return outcome in (Outcome.SUCCESS, Outcome.PARTIAL_SUCCESS)
+    if normalized == "false":
+        return True  # no gate
+
+    gate_vars: dict[str, Any] = {"outcome": outcome.value, **ctx}
+    return evaluate_condition(gate_expr, gate_vars)
+
+
 def _check_goal_gate(
     node: Node,
     result: HandlerResult,
@@ -396,11 +421,7 @@ def _check_goal_gate(
     if not node.goal_gate:
         return ("pass", redirect_count, None)
 
-    gate_vars: dict[str, Any] = {
-        "outcome": result.status.value,
-        **ctx,
-    }
-    if evaluate_condition(node.goal_gate, gate_vars):
+    if _eval_goal_gate(node.goal_gate, result.status, ctx):
         return ("pass", redirect_count, None)
 
     # Gate failed
@@ -516,8 +537,7 @@ def _check_aggregate_goal_gates(
         if outcome is None:
             continue
 
-        gate_vars: dict[str, Any] = {"outcome": outcome.value, **ctx}
-        if evaluate_condition(node.goal_gate, gate_vars):
+        if _eval_goal_gate(node.goal_gate, outcome, ctx):
             continue  # gate satisfied
 
         # Gate failed

@@ -929,3 +929,174 @@ class TestGenerateReturnsResult:
         assert "hello" in result
         assert str(result) == "hello"
         assert bool(result)
+
+
+# ================================================================== #
+# D3: goal_gate=true boolean semantic (Spec §3.2 / §11 DoD 11.4.1-2)
+# ================================================================== #
+
+
+class TestGoalGateBooleanTrue:
+    """Spec §3.2: goal_gate is a Boolean attribute.
+
+    goal_gate=true  → node must reach SUCCESS before pipeline exits.
+    goal_gate=false → no gate (same as omitting the attribute).
+
+    Previously the engine treated goal_gate as a condition-expression
+    string, so 'true' was a bare key-lookup that always resolved to ''
+    (falsy), meaning goal_gate=true nodes NEVER satisfied their gate.
+    """
+
+    @pytest.mark.asyncio
+    async def test_goal_gate_true_satisfied_on_success(self):
+        """goal_gate=true: node that succeeds lets the pipeline exit."""
+        g = Graph(name="test", max_goal_gate_redirects=3)
+        g.nodes["start"] = Node(id="start", shape="Mdiamond")
+        g.nodes["task"] = Node(
+            id="task",
+            shape="box",
+            goal_gate="true",
+            retry_target="start",
+        )
+        g.nodes["done"] = Node(id="done", shape="Msquare")
+        g.edges.append(Edge(source="start", target="task"))
+        g.edges.append(Edge(source="task", target="done"))
+
+        registry = HandlerRegistry()
+        registry.register("start", _OutcomeHandler(Outcome.SUCCESS))
+        registry.register("codergen", _OutcomeHandler(Outcome.SUCCESS))
+        registry.register("exit", _OutcomeHandler(Outcome.SUCCESS))
+
+        result = await run_pipeline(g, registry)
+
+        # Gate satisfied (SUCCESS) → pipeline should complete, not redirect
+        assert result.status == PipelineStatus.COMPLETED
+        # task should appear exactly once (no redirects)
+        assert result.completed_nodes.count("task") == 1
+
+    @pytest.mark.asyncio
+    async def test_goal_gate_true_not_satisfied_on_fail(self):
+        """goal_gate=true: node that fails blocks the pipeline exit."""
+        g = Graph(name="test", max_goal_gate_redirects=2)
+        g.nodes["start"] = Node(id="start", shape="Mdiamond")
+        g.nodes["task"] = Node(
+            id="task",
+            shape="box",
+            goal_gate="true",
+            retry_target="start",
+        )
+        g.nodes["done"] = Node(id="done", shape="Msquare")
+        g.edges.append(Edge(source="start", target="task"))
+        g.edges.append(Edge(source="task", target="done"))
+
+        registry = HandlerRegistry()
+        registry.register("start", _OutcomeHandler(Outcome.SUCCESS))
+        # Task always fails → gate never satisfied → redirects until circuit breaker
+        registry.register("codergen", _OutcomeHandler(Outcome.FAIL))
+        registry.register("exit", _OutcomeHandler(Outcome.SUCCESS))
+
+        with patch("attractor_pipeline.engine.runner.anyio.sleep", new_callable=AsyncMock):
+            result = await run_pipeline(g, registry)
+
+        # Gate never satisfied → pipeline should FAIL (circuit breaker)
+        assert result.status == PipelineStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_goal_gate_false_is_no_op(self):
+        """goal_gate=false: node is never a gate regardless of outcome."""
+        g = Graph(name="test", max_goal_gate_redirects=3)
+        g.nodes["start"] = Node(id="start", shape="Mdiamond")
+        g.nodes["task"] = Node(
+            id="task",
+            shape="box",
+            goal_gate="false",
+            retry_target="start",
+        )
+        g.nodes["done"] = Node(id="done", shape="Msquare")
+        g.edges.append(Edge(source="start", target="task"))
+        g.edges.append(Edge(source="task", target="done"))
+
+        registry = HandlerRegistry()
+        registry.register("start", _OutcomeHandler(Outcome.SUCCESS))
+        # Even though task fails, goal_gate=false means no gate → pipeline exits
+        registry.register("codergen", _OutcomeHandler(Outcome.FAIL))
+        registry.register("exit", _OutcomeHandler(Outcome.SUCCESS))
+
+        with patch("attractor_pipeline.engine.runner.anyio.sleep", new_callable=AsyncMock):
+            result = await run_pipeline(g, registry)
+
+        # No gate → pipeline completes regardless of task outcome
+        assert result.status == PipelineStatus.COMPLETED
+
+
+# ================================================================== #
+# D2: context.* condition variable resolution (Spec §10.4)
+# ================================================================== #
+
+
+class TestContextDotVariableResolution:
+    """Spec §10.4: context.key resolves to the pipeline context value for key.
+
+    Previously _resolve('context.foo', flat_vars) returned '' because
+    variables were spread as {**context} (flat keys like 'foo'), but
+    the resolver looked for 'context.foo' as a flat key (not found) then
+    tried variables['context']['foo'] which also didn't exist.
+
+    The fix: when the key starts with 'context.', strip the prefix and
+    look up the bare key in the flat variables dict as a fallback.
+    """
+
+    def test_context_dot_key_resolves_in_flat_dict(self):
+        """context.foo resolves when flat_vars contains 'foo' (select_edge pattern)."""
+        from attractor_pipeline.conditions import _resolve
+
+        # select_edge() spreads context as {**context, 'outcome': ..., ...}
+        flat_vars = {"foo": "bar", "outcome": "success"}
+        assert _resolve("context.foo", flat_vars) == "bar"
+
+    def test_context_dot_missing_key_returns_empty(self):
+        """context.missing returns '' when key is absent."""
+        from attractor_pipeline.conditions import _resolve
+
+        flat_vars = {"foo": "bar"}
+        assert _resolve("context.missing", flat_vars) == ""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_edge_condition_with_context_dot_prefix(self):
+        """End-to-end: edge condition 'context.quality = high' routes correctly."""
+        from attractor_pipeline.graph import Edge as _Edge
+
+        g = Graph(name="test", max_goal_gate_redirects=3)
+        g.nodes["start"] = Node(id="start", shape="Mdiamond")
+        g.nodes["check"] = Node(id="check", shape="box")
+        g.nodes["good"] = Node(id="good", shape="Msquare")
+        g.nodes["bad"] = Node(id="bad", shape="Msquare")
+        g.edges.append(_Edge(source="start", target="check"))
+        g.edges.append(_Edge(source="check", target="good", condition="context.quality = high"))
+        g.edges.append(_Edge(source="check", target="bad"))
+
+        registry = HandlerRegistry()
+        registry.register("start", _OutcomeHandler(Outcome.SUCCESS))
+        registry.register(
+            "codergen",
+            _OutcomeHandlerWithContext(Outcome.SUCCESS, {"quality": "high"}),
+        )
+        registry.register("exit", _OutcomeHandler(Outcome.SUCCESS))
+
+        result = await run_pipeline(g, registry)
+
+        # Edge condition 'context.quality = high' should route to 'good'
+        assert result.status == PipelineStatus.COMPLETED
+        assert "good" in result.completed_nodes
+        assert "bad" not in result.completed_nodes
+
+
+class _OutcomeHandlerWithContext:
+    """Handler that returns specified outcome and context_updates."""
+
+    def __init__(self, status: Outcome, updates: dict) -> None:
+        self._status = status
+        self._updates = updates
+
+    async def execute(self, node, context, graph, logs_root, abort_signal) -> HandlerResult:
+        return HandlerResult(status=self._status, output="done", context_updates=self._updates)
