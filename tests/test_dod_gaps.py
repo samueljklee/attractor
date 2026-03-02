@@ -1091,6 +1091,71 @@ class TestContextDotVariableResolution:
         assert "bad" not in result.completed_nodes
 
 
+# ================================================================== #
+# §11.3.8: PipelineStatus values
+# ================================================================== #
+
+
+class TestPipelineStatusValues:
+    """§11.3.8: PipelineStatus strings must be 'success'/'fail' per spec."""
+
+    def test_completed_value_is_success(self):
+        from attractor_pipeline.engine.runner import PipelineStatus
+
+        assert PipelineStatus.COMPLETED.value == "success", (
+            f"PipelineStatus.COMPLETED must be 'success', got '{PipelineStatus.COMPLETED.value}'"
+        )
+
+    def test_failed_value_is_fail(self):
+        from attractor_pipeline.engine.runner import PipelineStatus
+
+        assert PipelineStatus.FAILED.value == "fail", (
+            f"PipelineStatus.FAILED must be 'fail', got '{PipelineStatus.FAILED.value}'"
+        )
+
+
+# ================================================================== #
+# §11.6.3: response.md written for codergen nodes even when output empty
+# ================================================================== #
+
+
+class TestResponseMdWritten:
+    """§11.6.3: response.md must be written for codergen nodes."""
+
+    @pytest.mark.asyncio
+    async def test_response_md_written_even_when_output_empty(self, tmp_path):
+        """Codergen node with HandlerResult(output=None) still gets response.md."""
+        from attractor_pipeline import HandlerRegistry, parse_dot, run_pipeline
+        from attractor_pipeline.handlers import register_default_handlers
+
+        class _EmptyOutputBackend:
+            async def run(self, node, prompt, context, abort_signal):
+                # Returns HandlerResult with NO output
+                return HandlerResult(status=Outcome.SUCCESS, output="", notes="done")
+
+        g = parse_dot("""
+        digraph test {
+            graph [goal="test"]
+            start [shape=Mdiamond]
+            task  [shape=box, prompt="Do something"]
+            done  [shape=Msquare]
+            start -> task -> done
+        }
+        """)
+
+        registry = HandlerRegistry()
+        register_default_handlers(registry, codergen_backend=_EmptyOutputBackend())
+
+        logs_root = tmp_path / "logs"
+        result = await run_pipeline(g, registry, logs_root=logs_root)
+
+        # response.md must exist for the codergen node
+        response_file = logs_root / "task" / "response.md"
+        assert response_file.exists(), (
+            "response.md must be written for codergen nodes even when backend returns empty output"
+        )
+
+
 class _OutcomeHandlerWithContext:
     """Handler that returns specified outcome and context_updates."""
 

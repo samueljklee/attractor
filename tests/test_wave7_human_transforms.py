@@ -355,7 +355,7 @@ class TestRunPipelineTransforms:
 
         # Empty transforms -- should work like before
         result = await run_pipeline(graph, registry, transforms=[])
-        assert result.status.value == "completed"
+        assert result.status.value == "success"
 
     @pytest.mark.anyio
     async def test_transforms_applied_before_execution(self) -> None:
