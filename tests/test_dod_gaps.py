@@ -1482,3 +1482,185 @@ class TestGenerateWithDefaultClient:
             )
         finally:
             client_mod._default_client = saved
+
+
+# §8.4.7/8.4.8: generate_object() schema validation
+# ================================================================== #
+
+
+class TestGenerateObjectSchemaValidation:
+    """§8.4.7/8.4.8: generate_object() must validate parsed JSON against schema."""
+
+    @pytest.mark.asyncio
+    async def test_valid_object_passes(self):
+        """A response that matches the schema returns a GenerateObjectResult."""
+        from attractor_llm.errors import NoObjectGeneratedError  # noqa: F401
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        # Schema: {"type": "object", "required": ["name", "age"], "properties": {...}}
+        schema = {
+            "type": "object",
+            "required": ["name", "age"],
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+            },
+        }
+        adapter = MockAdapter(responses=[make_text_response('{"name": "Alice", "age": 30}')])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        result = await llm_generate_object(
+            client, model="mock-model", prompt="extract", schema=schema, provider="mock"
+        )
+        assert result.parsed_object == {"name": "Alice", "age": 30}
+
+    @pytest.mark.asyncio
+    async def test_wrong_type_raises_no_object_generated(self):
+        """A response with wrong field types raises NoObjectGeneratedError. §8.4.8"""
+        from attractor_llm.errors import NoObjectGeneratedError
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+            },
+        }
+        # age is a string instead of integer
+        adapter = MockAdapter(responses=[make_text_response('{"name": "Alice", "age": "thirty"}')])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        with pytest.raises(NoObjectGeneratedError, match="schema"):
+            await llm_generate_object(
+                client, model="mock-model", prompt="extract", schema=schema, provider="mock"
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_required_field_raises(self):
+        """A response missing required fields raises NoObjectGeneratedError. §8.4.8"""
+        from attractor_llm.errors import NoObjectGeneratedError
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        schema = {
+            "type": "object",
+            "required": ["name", "email"],
+            "properties": {
+                "name": {"type": "string"},
+                "email": {"type": "string"},
+            },
+        }
+        # 'email' is missing
+        adapter = MockAdapter(responses=[make_text_response('{"name": "Bob"}')])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        with pytest.raises(NoObjectGeneratedError, match="schema"):
+            await llm_generate_object(
+                client, model="mock-model", prompt="extract", schema=schema, provider="mock"
+            )
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_still_raises(self):
+        """Pure JSON parse failure still raises NoObjectGeneratedError. §8.4.8"""
+        from attractor_llm.errors import NoObjectGeneratedError
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        schema = {"type": "object"}
+        adapter = MockAdapter(responses=[make_text_response("not valid json {")])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        with pytest.raises(NoObjectGeneratedError):
+            await llm_generate_object(
+                client, model="mock-model", prompt="extract", schema=schema, provider="mock"
+            )
+
+    @pytest.mark.asyncio
+    async def test_no_schema_skips_validation(self):
+        """Without a schema, any valid JSON is returned without validation."""
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        # This would fail if schema were {"type": "string"}, but no schema is given
+        adapter = MockAdapter(responses=[make_text_response('{"arbitrary": true}')])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        result = await llm_generate_object(
+            client, model="mock-model", prompt="extract", provider="mock"
+        )
+        assert result.parsed_object == {"arbitrary": True}
+
+    @pytest.mark.asyncio
+    async def test_fallback_required_without_type_key(self):
+        """Fallback: required fields checked even when schema omits 'type' key.
+
+        A schema like {"required": ["name"]} (no "type" key) is valid JSON Schema.
+        The fallback must still check required fields for dict responses.
+        """
+        import sys
+        from unittest.mock import patch
+        from attractor_llm.generate import generate_object as llm_generate_object
+        from attractor_llm.errors import NoObjectGeneratedError
+
+        schema = {"required": ["name"], "properties": {"name": {"type": "string"}}}
+        # Response is missing "name"
+        adapter = MockAdapter(responses=[make_text_response("{}")])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        # Force the fallback path by making jsonschema unavailable
+        with patch.dict(sys.modules, {"jsonschema": None}):
+            with pytest.raises(NoObjectGeneratedError, match="Missing required"):
+                await llm_generate_object(
+                    client, model="mock-model", prompt="extract",
+                    schema=schema, provider="mock"
+                )
+
+    @pytest.mark.asyncio
+    async def test_fallback_bool_rejected_for_integer_field(self):
+        """Fallback: boolean True/False must not pass as integer field."""
+        import sys
+        from unittest.mock import patch
+        from attractor_llm.generate import generate_object as llm_generate_object
+        from attractor_llm.errors import NoObjectGeneratedError
+
+        schema = {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+        }
+        adapter = MockAdapter(responses=[make_text_response('{"count": true}')])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        with patch.dict(sys.modules, {"jsonschema": None}):
+            with pytest.raises(NoObjectGeneratedError, match="schema"):
+                await llm_generate_object(
+                    client, model="mock-model", prompt="extract",
+                    schema=schema, provider="mock"
+                )
+
+    @pytest.mark.asyncio
+    async def test_fallback_valid_object_passes(self):
+        """Fallback path: a valid object still passes when jsonschema is absent."""
+        import sys
+        from unittest.mock import patch
+        from attractor_llm.generate import generate_object as llm_generate_object
+
+        schema = {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string"}},
+        }
+        adapter = MockAdapter(responses=[make_text_response('{"name": "Alice"}')])
+        client = Client()
+        client.register_adapter("mock", adapter)
+
+        with patch.dict(sys.modules, {"jsonschema": None}):
+            result = await llm_generate_object(
+                client, model="mock-model", prompt="extract",
+                schema=schema, provider="mock"
+            )
+        assert result.parsed_object == {"name": "Alice"}

@@ -595,7 +595,8 @@ async def generate_object(
         parsed_object (the parsed dict).
 
     Raises:
-        NoObjectGeneratedError: If the response is not valid JSON.
+        NoObjectGeneratedError: If the response is not valid JSON or fails
+            schema validation (when a schema is provided).
     """
     if client is None:
         from attractor_llm.client import get_default_client
@@ -674,6 +675,16 @@ async def generate_object(
             f"Response is not valid JSON: {e}\nResponse was: {text[:500]}"
         ) from e
 
+    # §8.4.7/8.4.8: Validate the parsed object against the caller-supplied schema.
+    if schema:
+        validation_error = _validate_against_schema(parsed, schema)
+        if validation_error:
+            from attractor_llm.errors import NoObjectGeneratedError
+
+            raise NoObjectGeneratedError(
+                f"Response does not match schema: {validation_error}\nResponse was: {text[:500]}"
+            )
+
     return GenerateObjectResult(
         text=text,
         steps=[StepResult(response=response)],
@@ -747,5 +758,91 @@ def _validate_tool_args(tool: Tool, args: dict[str, Any]) -> str | None:
                 f"ToolArgError: argument '{key}' expected {expected_type_name},"
                 f" got {type(value).__name__} for tool '{tool.name}'"
             )
+
+    return None
+
+
+def _validate_against_schema(obj: Any, schema: dict[str, Any]) -> str | None:
+    """Validate `obj` against a JSON Schema subset. Returns None on success, error on failure.
+
+    Attempts to use `jsonschema` for full JSON Schema validation when available.
+    Falls back to a basic type + required-fields check when jsonschema is not installed.
+
+    Fallback limitations (documented intentional scope):
+    - Only checks top-level type and required fields; nested schemas are not recursed.
+    - Union types (e.g. ``{"type": ["string", "null"]}``) are silently accepted.
+    - Composition keywords (``oneOf``, ``anyOf``, ``$ref``, ``pattern``, etc.) are ignored.
+    """
+    # Prefer jsonschema for full validation (Spec §8.4.7)
+    try:
+        import jsonschema  # type: ignore[import-untyped]
+    except ImportError:
+        pass
+    else:
+        try:
+            jsonschema.validate(obj, schema)
+            return None
+        except jsonschema.ValidationError as exc:
+            return exc.message
+        except jsonschema.SchemaError as exc:
+            # The schema itself is malformed — surface a clear error rather than
+            # letting the library exception propagate as an unexpected type.
+            return f"Invalid schema: {exc.message}"
+
+    # Fallback: basic type + required-fields check
+    _TYPE_MAP_LOCAL: dict[str, type | tuple[type, ...]] = {
+        "string": str,
+        "array": (list,),
+        "object": (dict,),
+        "null": (type(None),),
+        # integer/number/boolean have dedicated checks below; entries kept
+        # so that the "unknown type → pass" logic works correctly via None.
+        "integer": (int,),
+        "number": (int, float),
+        "boolean": (bool,),
+    }
+
+    def _check_type(val: Any, expected_type: Any) -> bool:
+        # Guard against union-type schemas (e.g. "type": ["string", "null"])
+        # which are valid JSON Schema but cannot be looked up as a dict key.
+        if not isinstance(expected_type, str):
+            return True  # complex type — skip in fallback
+        types = _TYPE_MAP_LOCAL.get(expected_type)
+        if types is None:
+            return True  # unknown type — pass
+        if expected_type == "integer":
+            return isinstance(val, int) and not isinstance(val, bool)
+        if expected_type == "number":
+            return isinstance(val, (int, float)) and not isinstance(val, bool)
+        if expected_type == "boolean":
+            return isinstance(val, bool)
+        return isinstance(val, types)
+
+    schema_type = schema.get("type")
+    if schema_type is not None:
+        if not _check_type(obj, schema_type):
+            return f"Expected type '{schema_type}', got '{type(obj).__name__}'"
+
+    # Check required fields and property types for any dict-like object.
+    # Apply when the schema has "type": "object" OR when type is absent but
+    # the schema has "required"/"properties" keywords (valid JSON Schema — the
+    # type constraint is unconstrained, but object keywords still apply to dicts).
+    is_object_schema = schema_type == "object" or (
+        schema_type is None and ("required" in schema or "properties" in schema)
+    )
+    if is_object_schema and isinstance(obj, dict):
+        required = schema.get("required", [])
+        missing = [f for f in required if f not in obj]
+        if missing:
+            return f"Missing required fields: {missing}"
+        properties = schema.get("properties", {})
+        for key, val in obj.items():
+            if key in properties:
+                prop_type = properties[key].get("type")
+                if prop_type and not _check_type(val, prop_type):
+                    return (
+                        f"Field '{key}': expected '{prop_type}', "
+                        f"got '{type(val).__name__}'"
+                    )
 
     return None
