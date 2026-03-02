@@ -126,7 +126,7 @@ class OpenAICompatAdapter:
                 )
 
             yield StreamEvent(
-                kind=StreamEventKind.START,
+                kind=StreamEventKind.STREAM_START,
                 model=request.model,
                 provider="openai-compat",
             )

@@ -457,10 +457,8 @@ class GeminiAdapter:
                     headers=headers_dict,
                 )
 
-            first_chunk = True
-            async for event in self._parse_stream(http_response, request, first_chunk):
+            async for event in self._parse_stream(http_response, request, first_chunk=True):
                 yield event
-                first_chunk = False
 
     async def _parse_stream(
         self,
@@ -492,10 +490,10 @@ class GeminiAdapter:
             except json.JSONDecodeError:
                 continue
 
-            # Emit START on first chunk
+            # Emit STREAM_START on first chunk
             if first_chunk:
                 yield StreamEvent(
-                    kind=StreamEventKind.START,
+                    kind=StreamEventKind.STREAM_START,
                     model=data.get("modelVersion", request.model),
                     response_id=data.get("responseId", ""),
                     provider="gemini",

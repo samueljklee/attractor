@@ -191,9 +191,7 @@ class ToolRegistry:
                     limits = TruncationLimits.for_tool(
                         tool_name, self._output_limits, self._line_limits
                     )
-                    output, was_truncated = truncate_output(raw_output_str, limits)
-                    if was_truncated:
-                        output += "\n[output was truncated]"
+                    output, _ = truncate_output(raw_output_str, limits)
 
                 except Exception as exc:  # noqa: BLE001
                     # Send only the exception message to the LLM, not the full

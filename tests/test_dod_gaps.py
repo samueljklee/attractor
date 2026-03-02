@@ -1664,3 +1664,164 @@ class TestGenerateObjectSchemaValidation:
                 schema=schema, provider="mock"
             )
         assert result.parsed_object == {"name": "Alice"}
+
+# §8.4.5: Adapters must emit STREAM_START, not START
+# ================================================================== #
+
+
+class TestStreamStartEvent:
+    """§8.4.5: Adapters must emit STREAM_START, not the legacy START event."""
+
+    @pytest.mark.asyncio
+    async def test_openai_adapter_emits_stream_start(self):
+        """OpenAI adapter's _handle_sse_event emits STREAM_START for response.created."""
+        from attractor_llm.adapters.base import ProviderConfig
+        from attractor_llm.adapters.openai import OpenAIAdapter
+        from attractor_llm.types import Request, StreamEventKind
+
+        adapter = OpenAIAdapter(ProviderConfig(api_key="test"))
+        request = Request(model="gpt-test", messages=[Message.user("hi")])
+        data = {"response": {"model": "gpt-test", "id": "resp-123"}}
+
+        events = []
+        async for ev in adapter._handle_sse_event(
+            "response.created", data, request, None, None
+        ):
+            events.append(ev)
+
+        assert events, "Expected at least one event from response.created"
+        assert events[0].kind == StreamEventKind.STREAM_START, (
+            f"Expected STREAM_START, got {events[0].kind}"
+        )
+        assert events[0].model == "gpt-test"
+        assert events[0].response_id == "resp-123"
+
+    @pytest.mark.asyncio
+    async def test_anthropic_adapter_emits_stream_start(self):
+        """Anthropic adapter's _handle_sse_event emits STREAM_START for message_start."""
+        from attractor_llm.adapters.anthropic import AnthropicAdapter
+        from attractor_llm.adapters.base import ProviderConfig
+        from attractor_llm.types import StreamEventKind
+
+        adapter = AnthropicAdapter(ProviderConfig(api_key="test"))
+        data = {"message": {"model": "claude-test", "id": "msg-123", "usage": {}}}
+
+        events = []
+        async for ev in adapter._handle_sse_event(
+            "message_start", data, None, None, None, "claude-test", ""
+        ):
+            events.append(ev)
+
+        assert events, "Expected at least one event from message_start"
+        assert events[0].kind == StreamEventKind.STREAM_START, (
+            f"Expected STREAM_START, got {events[0].kind}"
+        )
+        assert events[0].model == "claude-test"
+        assert events[0].response_id == "msg-123"
+
+    @pytest.mark.asyncio
+    async def test_gemini_adapter_emits_stream_start(self):
+        """Gemini adapter's _parse_stream emits STREAM_START on first data chunk."""
+        import asyncio
+        import json
+
+        from attractor_llm.adapters.base import ProviderConfig
+        from attractor_llm.adapters.gemini import GeminiAdapter
+        from attractor_llm.types import Request, StreamEventKind
+
+        adapter = GeminiAdapter(ProviderConfig(api_key="test"))
+        request = Request(model="gemini-test", messages=[Message.user("hi")])
+
+        # Minimal valid Gemini chunk with a text candidate
+        chunk = {
+            "candidates": [{"content": {"parts": [{"text": "hi"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {},
+            "modelVersion": "gemini-test",
+            "responseId": "gemini-resp-1",
+        }
+
+        async def _fake_aiter_lines():
+            yield f"data: {json.dumps(chunk)}"
+
+        class _FakeResponse:
+            def aiter_lines(self):
+                return _fake_aiter_lines()
+
+        events = []
+        async for ev in adapter._parse_stream(_FakeResponse(), request, True):
+            events.append(ev)
+            break  # only need the first event
+
+        assert events, "Expected at least one event from Gemini stream"
+        assert events[0].kind == StreamEventKind.STREAM_START, (
+            f"Expected STREAM_START, got {events[0].kind}"
+        )
+
+    def test_stream_accumulator_accepts_stream_start(self):
+        """StreamAccumulator accepts STREAM_START events (new canonical form)."""
+        from attractor_llm.streaming import StreamAccumulator
+        from attractor_llm.types import StreamEvent, StreamEventKind
+
+        acc = StreamAccumulator()
+        acc.feed(StreamEvent(kind=StreamEventKind.STREAM_START, model="test-model", provider="mock"))
+        assert acc.started, "StreamAccumulator must mark started=True on STREAM_START event"
+
+    def test_stream_accumulator_accepts_legacy_start(self):
+        """StreamAccumulator also accepts legacy START events for backward compat."""
+        from attractor_llm.streaming import StreamAccumulator
+        from attractor_llm.types import StreamEvent, StreamEventKind
+
+        acc = StreamAccumulator()
+        acc.feed(StreamEvent(kind=StreamEventKind.START, model="test-model", provider="mock"))
+        assert acc.started, "StreamAccumulator must also accept legacy START event"
+
+
+# ================================================================== #
+# §9.5.3: Truncated tool output must have exactly ONE truncation marker
+# ================================================================== #
+
+
+class TestTruncationMarker:
+    """§9.5.3: Truncated tool output must have exactly ONE truncation marker."""
+
+    @pytest.mark.asyncio
+    async def test_exactly_one_truncation_marker_in_llm_output(self):
+        """When tool output is truncated, the LLM sees exactly one WARNING marker.
+
+        Previously tools/registry.py appended '\\n[output was truncated]' ON TOP
+        OF the spec-compliant WARNING already embedded by truncate_output(), giving
+        the LLM two distinct truncation signals.
+        """
+        from attractor_llm.types import Tool
+
+        # Create a registry with tight per-character limits so truncation fires
+        registry = ToolRegistry(
+            supports_parallel_tool_calls=False,
+            tool_output_limits={"big_tool": 50},  # 50-char limit
+        )
+
+        big_output = "A" * 200  # 200-char output > 50-char limit
+
+        async def big_tool_func() -> str:
+            return big_output
+
+        registry.register(Tool(
+            name="big_tool",
+            description="returns big output",
+            execute=big_tool_func,
+        ))
+
+        tc = ContentPart.tool_call_part("tc-1", "big_tool", {})
+        results = await registry.execute_tool_calls([tc])
+
+        assert len(results) == 1
+        result_text = results[0].output or ""
+
+        # The spec-compliant WARNING from truncate_output() should appear exactly once
+        assert result_text.count("[WARNING: Tool output was truncated") == 1, (
+            f"Expected exactly 1 truncation WARNING, got multiple. Output: {result_text[:200]}"
+        )
+        # The legacy marker must NOT appear as a second signal
+        assert "[output was truncated]" not in result_text.split("WARNING")[1] if "WARNING" in result_text else True, (
+            f"Legacy truncation marker found after spec marker. Output: {result_text[:200]}"
+        )
