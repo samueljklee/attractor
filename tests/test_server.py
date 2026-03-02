@@ -420,6 +420,7 @@ class TestWebInterviewer:
     @pytest.mark.asyncio
     async def test_answer_received(self):
         from attractor_pipeline.graph import Graph, Node
+        from attractor_pipeline.handlers.human import Question
 
         run = PipelineRun(
             id="test",
@@ -429,7 +430,7 @@ class TestWebInterviewer:
 
         # Start the ask in background
         async def do_ask():
-            return await interviewer.ask("Approve?", options=["yes", "no"])
+            return await interviewer.ask(Question(text="Approve?", options=["yes", "no"]))
 
         task = asyncio.create_task(do_ask())
 
@@ -442,20 +443,24 @@ class TestWebInterviewer:
         submit_answer(run, qid, "yes")
 
         answer = await asyncio.wait_for(task, timeout=2.0)
-        assert answer == "yes"
+        assert answer.value == "yes"
+        assert answer.selected_option == "yes"
 
     @pytest.mark.asyncio
     async def test_timeout_returns_default(self):
         from attractor_pipeline.graph import Graph, Node
+        from attractor_pipeline.handlers.human import Question
 
         run = PipelineRun(
             id="test",
             graph=Graph(name="Test", nodes={"s": Node(id="s", shape="Mdiamond")}),
         )
-        interviewer = WebInterviewer(run, timeout=0.1)
+        interviewer = WebInterviewer(run, timeout=5.0)
 
-        answer = await interviewer.ask("Approve?", default="auto-denied", timeout=0.1)
-        assert answer == "auto-denied"
+        answer = await interviewer.ask(
+            Question(text="Approve?", default="auto-denied", timeout_seconds=0.1)
+        )
+        assert answer.value == "auto-denied"
 
     @pytest.mark.asyncio
     async def test_submit_unknown_qid_returns_false(self):

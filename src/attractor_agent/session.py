@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import os
 import signal as _signal
 from collections import Counter
@@ -554,6 +555,28 @@ class Session:
             # Check if the model wants to call tools
             tool_calls = response.tool_calls
             if tool_calls:
+                # §9.10.1: Emit text events for any interleaved text the model
+                # produced alongside tool calls (e.g. "I'll check that for you…").
+                _interleaved_text = response.text or ""
+                if _interleaved_text:
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.ASSISTANT_TEXT_START,
+                            data={"turn": self._turn_count},
+                        )
+                    )
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.ASSISTANT_TEXT_DELTA,
+                            data={"delta": _interleaved_text},
+                        )
+                    )
+                    await self._emitter.emit(
+                        SessionEvent(
+                            kind=EventKind.ASSISTANT_TEXT_END,
+                            data={"text": _interleaved_text[:500]},
+                        )
+                    )
                 tool_round += 1
 
                 # Execute all tool calls
@@ -786,14 +809,14 @@ class Session:
         """Best-effort resource cleanup on abort. Spec Appendix B.
 
         Implements the 8-step shutdown sequence:
-          Step 1 (scaffolding): Cancel tracked asyncio tasks (LLM stream / active tasks).
-          Step 2 (TODO): Send SIGTERM to running shell processes.
-          Step 3 (TODO): Wait up to 2 seconds for processes to exit.
-          Step 4 (TODO): Send SIGKILL to remaining processes.
-          Step 5 (done): Flush pending work queues.
-          Step 6 (done): Cancel and clear subagent tasks.
-          Step 7 (done): Flush events -- caller emits TURN_END / SESSION_END.
-          Step 8 (done): Transition to CLOSED -- handled by submit() finally block.
+          Step 1: Cancel tracked asyncio tasks (LLM stream / active tasks).
+          Step 2: Send SIGTERM to running tracked processes.
+          Step 3: Wait up to 2 seconds for processes to exit.
+          Step 4: Send SIGKILL to remaining processes.
+          Step 5: Flush pending work queues.
+          Step 6: Cancel and clear subagent tasks.
+          Step 7: Flush events -- caller emits TURN_END / SESSION_END.
+          Step 8: Transition to CLOSED -- handled by submit() finally block.
 
         Steps 2-4 (process SIGTERM/SIGKILL) require the ExecutionEnvironment to
         expose a process registry.  The LocalEnvironment runs each shell command
@@ -815,7 +838,7 @@ class Session:
         # _tracked_processes holds asyncio.subprocess.Process objects registered
         # by callers.  Full automatic tracking requires env protocol changes
         # (e.g. an env.kill_all_processes() method on LocalEnvironment).
-        _alive: list[asyncio.subprocess.Process] = []
+        _alive: list[Any] = []  # asyncio.subprocess.Process or subprocess.Popen
         for proc in self._tracked_processes:
             if proc.returncode is None:  # still running
                 try:
@@ -826,12 +849,18 @@ class Session:
 
         # --- Step 3: Wait up to 2 seconds for processes to exit. ---
         if _alive:
+            # Build awaitables for each process, handling both process types:
+            # - asyncio.subprocess.Process: proc.wait() is a coroutine → create_task directly
+            # - subprocess.Popen: proc.wait() is synchronous → wrap in asyncio.to_thread
+            # Use inspect.iscoroutinefunction() to detect without isinstance checks so that
+            # test mocks with AsyncMock.wait are handled correctly.
+            def _make_wait_task(proc: Any) -> asyncio.Task[Any]:
+                if inspect.iscoroutinefunction(proc.wait):
+                    return asyncio.create_task(proc.wait())
+                return asyncio.create_task(asyncio.to_thread(proc.wait))
+
             _done, _pending = await asyncio.wait(
-                # FIXME(Task 2): proc.wait() is a coroutine for asyncio.subprocess.Process but
-                # returns int for subprocess.Popen (wired by Task 2 via LocalEnvironment).
-                # asyncio.create_task() will raise TypeError on real abort with shell processes.
-                # Fix: branch on type or use asyncio.to_thread(proc.wait) for Popen objects.
-                [asyncio.create_task(proc.wait()) for proc in _alive],
+                [_make_wait_task(proc) for proc in _alive],
                 timeout=2.0,
             )
             # Cancel the wait tasks for any that didn't finish in time

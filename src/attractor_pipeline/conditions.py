@@ -75,8 +75,14 @@ def _evaluate_clause(clause: str, variables: dict[str, Any]) -> bool:
 def _resolve(key: str, variables: dict[str, Any]) -> Any:
     """Resolve a variable key from the variables dict.
 
-    Supports dotted paths: "context.foo" looks up variables["context.foo"]
-    first, then tries variables["context"]["foo"] as a fallback.
+    Resolution order:
+    1. Direct lookup: variables["context.foo"]
+    2. Nested dict: variables["context"]["foo"]
+    3. Bare-key fallback for "context.*" prefix: variables["foo"]
+       This handles the common case where select_edge() spreads the
+       pipeline context as {**context}, giving flat keys like "foo"
+       rather than "context.foo". Spec §10.4 requires context.* to
+       resolve against the pipeline context store.
     """
     # Direct lookup
     if key in variables:
@@ -88,5 +94,10 @@ def _resolve(key: str, variables: dict[str, Any]) -> Any:
         parent = variables.get(parts[0])
         if isinstance(parent, dict):
             return parent.get(parts[1], "")
+
+        # Bare-key fallback for "context.*" prefix (Spec §10.4)
+        # select_edge() spreads context as {**context} so keys are flat.
+        if parts[0] == "context" and parts[1] in variables:
+            return variables[parts[1]]
 
     return ""

@@ -53,8 +53,8 @@ from attractor_llm.types import (
 
 
 async def generate(
-    client: Client,
-    model: str,
+    client: Client | None = None,
+    model: str = "",
     prompt: str | None = None,
     *,
     system: str | None = None,
@@ -74,7 +74,9 @@ async def generate(
     back until the model produces a text response or max_rounds is hit.
 
     Args:
-        client: The LLM client with registered adapters.
+        client: LLM client. If None, uses the module-level default client
+            (set via set_default_client() or auto-initialized from environment
+            variables). Spec §8.1.7.
         model: Model ID (e.g., "claude-sonnet-4-5").
         prompt: User prompt string (mutually exclusive with messages).
         system: Optional system prompt.
@@ -95,6 +97,11 @@ async def generate(
         GenerateResult with text, step history, and aggregated token usage.
         Backward-compatible: str(result) returns text, result == "string" works.
     """
+    if client is None:
+        from attractor_llm.client import get_default_client
+
+        client = get_default_client()
+
     # Normalise timeout. Spec §8.4.10.
     tc: TimeoutConfig | None = None
     if isinstance(timeout, (int, float)):
@@ -279,9 +286,9 @@ async def generate(
 
 
 async def stream(
-    client: Client,
-    model: str,
-    prompt: str,
+    client: Client | None = None,
+    model: str = "",
+    prompt: str = "",
     *,
     system: str | None = None,
     temperature: float | None = None,
@@ -303,7 +310,9 @@ async def stream(
     yields text chunks (StreamResult implements __aiter__ for str).
 
     Args:
-        client: The LLM client with registered adapters.
+        client: LLM client. If None, uses the module-level default client
+            (set via set_default_client() or auto-initialized from environment
+            variables). Spec §8.1.7.
         model: Model ID.
         prompt: User prompt.
         system: Optional system prompt.
@@ -319,6 +328,11 @@ async def stream(
         timeout applies to stream connection setup, not full stream consumption.
         For full-stream timeouts, use abort_signal with an external timer.
     """
+    if client is None:
+        from attractor_llm.client import get_default_client
+
+        client = get_default_client()
+
     from attractor_llm.streaming import StreamResult
 
     # Normalise timeout. Spec §8.4.10.
@@ -347,8 +361,8 @@ async def stream(
 
 
 async def stream_with_tools(
-    client: Client,
-    model: str,
+    client: Client | None = None,
+    model: str = "",
     prompt: str | None = None,
     *,
     system: str | None = None,
@@ -377,7 +391,9 @@ async def stream_with_tools(
     single contiguous event stream covering all turns.
 
     Args:
-        client: The LLM client with registered adapters.
+        client: LLM client. If None, uses the module-level default client
+            (set via set_default_client() or auto-initialized from environment
+            variables). Spec §8.1.7.
         model: Model ID.
         prompt: User prompt string (mutually exclusive with messages).
         system: Optional system prompt.
@@ -398,6 +414,11 @@ async def stream_with_tools(
         timeout applies to stream connection setup per round, not full stream
         consumption. For full-stream timeouts, use abort_signal with an external timer.
     """
+    if client is None:
+        from attractor_llm.client import get_default_client
+
+        client = get_default_client()
+
     # Normalise timeout. Spec §8.4.10.
     tc: TimeoutConfig | None = None
     if isinstance(timeout, (int, float)):
@@ -543,9 +564,9 @@ async def stream_with_tools(
 
 
 async def generate_object(
-    client: Client,
-    model: str,
-    prompt: str,
+    client: Client | None = None,
+    model: str = "",
+    prompt: str = "",
     *,
     schema: dict[str, Any] | None = None,
     system: str | None = None,
@@ -559,7 +580,9 @@ async def generate_object(
     For Anthropic and unknown providers, falls back to prompt injection.
 
     Args:
-        client: The LLM client.
+        client: LLM client. If None, uses the module-level default client
+            (set via set_default_client() or auto-initialized from environment
+            variables). Spec §8.1.7.
         model: Model ID.
         prompt: User prompt.
         schema: Optional JSON schema for the response.
@@ -574,6 +597,11 @@ async def generate_object(
     Raises:
         NoObjectGeneratedError: If the response is not valid JSON.
     """
+    if client is None:
+        from attractor_llm.client import get_default_client
+
+        client = get_default_client()
+
     # §8.9.25/27: When provider is None but schema is given, auto-resolve the
     # provider from the model catalog so native structured output is used for
     # OpenAI and Gemini models rather than always falling back to prompt injection.
