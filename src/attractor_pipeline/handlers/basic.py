@@ -95,7 +95,11 @@ class ConditionalHandler:
 class ToolHandler:
     """Handler for tool/script nodes (shape=parallelogram). Spec §4.10.
 
-    Executes a shell command defined in the node's prompt attribute.
+    Executes a shell command. The command source is resolved in this
+    priority order per spec §4.10:
+      1. ``tool_command`` node attribute (canonical spec name)
+      2. ``command`` node attribute (backward-compat legacy name)
+      3. ``prompt`` node attribute (oldest fallback)
     The command runs in the pipeline's working directory.
     """
 
@@ -107,7 +111,14 @@ class ToolHandler:
         logs_root: Path | None,
         abort_signal: AbortSignal | None,
     ) -> HandlerResult:
-        command = node.prompt or node.attrs.get("command", "")
+        # Read command: spec §4.10 uses "tool_command" attribute; "command" and "prompt"
+        # are accepted as fallbacks for backward compatibility.
+        command = (
+            node.attrs.get("tool_command", "")
+            or node.attrs.get("command", "")
+            or node.prompt
+            or ""
+        )
         if not command:
             return HandlerResult(
                 status=Outcome.FAIL,

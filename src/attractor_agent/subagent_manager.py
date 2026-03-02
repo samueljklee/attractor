@@ -122,7 +122,7 @@ class SubagentManager:
             provider=provider,
             system_prompt=system_prompt or "",
             max_turns=max_turns,
-            max_tool_rounds_per_turn=max_tool_rounds,
+            max_tool_rounds_per_input=max_tool_rounds,
             working_dir=working_dir,
         )
         config = profile.apply_to_config(config)

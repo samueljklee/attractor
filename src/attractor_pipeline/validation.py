@@ -45,6 +45,7 @@ class Diagnostic:
     message: str
     node_id: str = ""
     edge_index: int = -1
+    edge_id: str = ""
 
 
 def validate(graph: Graph) -> list[Diagnostic]:
@@ -210,6 +211,7 @@ def _rule_edges_reference_existing_nodes(graph: Graph) -> list[Diagnostic]:
                     severity=Severity.ERROR,
                     message=f"Edge references unknown source node: '{edge.source}'",
                     edge_index=i,
+                    edge_id=f"{edge.source}->{edge.target}",
                 )
             )
         if edge.target not in graph.nodes:
@@ -219,6 +221,7 @@ def _rule_edges_reference_existing_nodes(graph: Graph) -> list[Diagnostic]:
                     severity=Severity.ERROR,
                     message=f"Edge references unknown target node: '{edge.target}'",
                     edge_index=i,
+                    edge_id=f"{edge.source}->{edge.target}",
                 )
             )
     return results
@@ -328,6 +331,7 @@ def _rule_no_self_loops(graph: Graph) -> list[Diagnostic]:
                     message=f"Self-loop on node '{edge.source}'",
                     edge_index=i,
                     node_id=edge.source,
+                    edge_id=f"{edge.source}->{edge.target}",
                 )
             )
     return results
@@ -387,6 +391,7 @@ def _rule_condition_syntax(graph: Graph) -> list[Diagnostic]:
                         f"'{edge.condition}': {exc}"
                     ),
                     edge_index=i,
+                    edge_id=f"{edge.source}->{edge.target}",
                 )
             )
     return results

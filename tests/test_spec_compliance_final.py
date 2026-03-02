@@ -70,7 +70,7 @@ class TestMaxTurnsDefaults:
         from attractor_agent.session import Session, SessionConfig
         from attractor_llm.types import Message, Response, Usage
 
-        config = SessionConfig(max_turns=0, max_tool_rounds_per_turn=0)
+        config = SessionConfig(max_turns=0, max_tool_rounds_per_input=0)
         mock_client = MagicMock()
         mock_response = Response(
             id="resp-1",
@@ -159,7 +159,7 @@ class TestMaxTurnsDefaults:
         from attractor_agent.session import Session, SessionConfig
         from attractor_llm.types import Message, Response, Usage
 
-        config = SessionConfig(max_turns=0, max_tool_rounds_per_turn=0)
+        config = SessionConfig(max_turns=0, max_tool_rounds_per_input=0)
         mock_client = MagicMock()
         # Return a text-only response immediately (no tool calls) so loop exits naturally.
         mock_response = Response(
