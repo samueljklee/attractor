@@ -565,6 +565,13 @@ class Session:
                 )
                 return "[Tool round limit reached]"
 
+            # Drain any pending steering messages before each LLM call.
+            # Spec §2.6: steer() messages are injected "before the next LLM call"
+            # regardless of whether steer() was called mid-tool-loop or between
+            # submit() calls.  The post-tool drain (below) handles the mid-loop
+            # case; this drain covers messages queued between submit() calls.
+            await self._drain_steering()
+
             # §9.11.5: Wrap the LLM call in a tracked task so that
             # _cleanup_on_abort() can cancel in-flight requests when the
             # session is aborted mid-generation.
