@@ -62,14 +62,14 @@ MODEL_CATALOG: list[ModelInfo] = [
         knowledge_cutoff="2024-04",
     ),
     ModelInfo(
-        id="gpt-5.2-mini",
+        id="gpt-4.1-mini",
         provider="openai",
-        display_name="GPT-5.2 Mini",
+        display_name="GPT-4.1 Mini",
         context_window=1_047_576,
         supports_tools=True,
         supports_vision=True,
-        supports_reasoning=True,
-        aliases=("gpt-mini", "5.2-mini"),
+        supports_reasoning=False,
+        aliases=("gpt-mini", "4.1-mini"),
         knowledge_cutoff="2024-04",
     ),
     ModelInfo(
@@ -90,7 +90,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         context_window=1_048_576,
         supports_tools=True,
         supports_vision=True,
-        supports_reasoning=True,
+        supports_reasoning=False,  # thinkingConfig not supported via v1beta API
         aliases=("gemini-pro", "3-pro"),
         knowledge_cutoff="2024-12",
     ),
@@ -101,9 +101,32 @@ MODEL_CATALOG: list[ModelInfo] = [
         context_window=1_048_576,
         supports_tools=True,
         supports_vision=True,
-        supports_reasoning=True,
+        supports_reasoning=False,  # thinkingConfig not supported via v1beta API
         aliases=("gemini-flash", "3-flash", "flash"),
         knowledge_cutoff="2024-12",
+    ),
+    # Gemini 2.5 models — support generationConfig.thinkingConfig
+    ModelInfo(
+        id="gemini-2.5-pro",
+        provider="gemini",
+        display_name="Gemini 2.5 Pro",
+        context_window=1_048_576,
+        supports_tools=True,
+        supports_vision=True,
+        supports_reasoning=True,
+        aliases=("gemini-2.5-pro-preview", "2.5-pro"),
+        knowledge_cutoff="2025-01",
+    ),
+    ModelInfo(
+        id="gemini-2.5-flash",
+        provider="gemini",
+        display_name="Gemini 2.5 Flash",
+        context_window=1_048_576,
+        supports_tools=True,
+        supports_vision=True,
+        supports_reasoning=True,
+        aliases=("gemini-2.5-flash-preview", "2.5-flash"),
+        knowledge_cutoff="2025-01",
     ),
 ]
 

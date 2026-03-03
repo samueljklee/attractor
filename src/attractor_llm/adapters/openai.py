@@ -147,9 +147,14 @@ class OpenAIAdapter:
                     "name": request.tool_choice,
                 }
 
-        # Reasoning effort (maps to reasoning.effort in Responses API)
+        # Reasoning effort (maps to reasoning.effort in Responses API).
+        # Only send when the model declares supports_reasoning=True in the catalog;
+        # sending it to non-reasoning models (e.g. gpt-4.1-mini) causes a 400 error.
         if request.reasoning_effort:
-            body["reasoning"] = {"effort": request.reasoning_effort}
+            from attractor_llm.catalog import get_model_info
+            model_info = get_model_info(request.model)
+            if model_info is None or model_info.supports_reasoning:
+                body["reasoning"] = {"effort": request.reasoning_effort}
 
         # Response format (Responses API uses text.format, not response_format)
         # P6: Native structured output -- json_schema type requires flattening

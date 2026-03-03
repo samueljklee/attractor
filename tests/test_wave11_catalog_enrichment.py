@@ -93,12 +93,12 @@ def test_alias_resolution_flash() -> None:
 def test_exact_id_takes_precedence_over_alias() -> None:
     """Exact ID lookup wins over alias lookup.
 
-    'gpt-5.2-mini' is a real catalog ID; it must be returned directly
+    'gpt-4.1-mini' is a real catalog ID; it must be returned directly
     (not confused with an alias match on a different entry).
     """
-    result = get_model_info("gpt-5.2-mini")
+    result = get_model_info("gpt-4.1-mini")
     assert result is not None
-    assert result.id == "gpt-5.2-mini"
+    assert result.id == "gpt-4.1-mini"
 
 
 def test_exact_id_lookup_still_works() -> None:

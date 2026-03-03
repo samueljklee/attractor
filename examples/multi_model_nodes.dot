@@ -1,0 +1,82 @@
+// Per-Node Model and Provider Overrides
+//
+// Demonstrates llm_model= and llm_provider= set directly on individual
+// nodes. Use this when you need node-level control beyond what a
+// model_stylesheet can express.
+//
+// Per-node attributes have the HIGHEST priority in the routing stack:
+//   1. Per-node llm_model= / llm_provider= (this file)  ← highest
+//   2. model_stylesheet ID selector  (#nodeid)
+//   3. model_stylesheet class selector (.class)
+//   4. model_stylesheet shape/universal selectors
+//   5. CLI --model / --provider flag                    ← lowest
+//
+// reasoning_effort= values: low | medium | high
+//   high  → extended thinking (much slower, requires extra max_tokens)
+//   medium → balanced; Anthropic extended thinking at 8192 budget tokens
+//   low   → fast, minimal reasoning overhead
+//
+// This pipeline demonstrates three different models for three phases:
+//   - Research:   Claude Sonnet (Anthropic)     — broad knowledge
+//   - Implement:  GPT (OpenAI)                  — second perspective
+//   - Critique:   Gemini Flash (Google)          — fast third opinion
+//
+// Each node overrides BOTH llm_model AND llm_provider.
+// The CLI registers all providers whose API keys are set automatically.
+//
+// Run: uv run python -m attractor_pipeline.cli run examples/multi_model_nodes.dot
+//      Requires ANTHROPIC_API_KEY, OPENAI_API_KEY, and GOOGLE_API_KEY.
+
+digraph MultiModelNodes {
+    graph [goal="Design and implement a simple in-memory key-value store in Python"]
+
+    start [shape=Mdiamond]
+
+    // ── Phase 1: Research with Claude Sonnet (Anthropic) ─────────────────────
+    //
+    // llm_model= + llm_provider= override the CLI --model/--provider flags.
+    // This node always uses Claude Sonnet regardless of what --model was passed.
+
+    research [
+        shape=box,
+        llm_model="claude-sonnet-4-5",
+        llm_provider="anthropic",
+        reasoning_effort="low",
+        label="Research (Claude Sonnet)",
+        prompt="Design a simple in-memory key-value store class in Python.\n\nSpecify:\n  - Class name and constructor signature\n  - get(key) → value | None\n  - set(key, value) → None\n  - delete(key) → bool\n  - clear() → None\n  - keys() → list[str]\n\nKeep the interface simple and Pythonic."
+    ]
+
+    // ── Phase 2: Implement with GPT-4.1-mini (OpenAI) ───────────────────────
+    //
+    // This node uses OpenAI GPT — completely different provider from research.
+
+    implement [
+        shape=box,
+        llm_model="gpt-4.1-mini",
+        llm_provider="openai",
+        label="Implement (GPT-4.1-mini)",
+        prompt="Implement this key-value store exactly as designed:\n\n${codergen.research.output}\n\nWrite a complete Python class with all methods. Include type hints. No external dependencies."
+    ]
+
+    // ── Phase 3: Critique with Gemini Flash (Google) ─────────────────────────
+    //
+    // Third provider for independent review.
+
+    critique [
+        shape=box,
+        llm_model="gemini-3-flash-preview",
+        llm_provider="gemini",
+        reasoning_effort="low",
+        label="Critique (Gemini Flash)",
+        prompt="Review this Python key-value store implementation:\n\n${codergen.implement.output}\n\nIdentify any bugs, missing edge cases, or API design issues. Be concise — 3-5 bullet points maximum. End with: VERDICT: APPROVE or VERDICT: REVISE"
+    ]
+
+    done [shape=Msquare]
+
+    // ── Flow ─────────────────────────────────────────────────────────────────
+
+    start   -> research
+    research -> implement
+    implement -> critique
+    critique -> done
+}

@@ -1,0 +1,70 @@
+// Edge Weights — Priority Routing
+//
+// Demonstrates weight= on edges to control which path is taken when multiple
+// edges are eligible and conditions are equal.
+//
+// Edge selection order (spec §3.4):
+//   1. Explicit condition match (condition= attribute evaluated against context)
+//   2. preferred_label match (model's output matches an edge label)
+//   3. suggested_next_ids (model explicitly names a node)
+//   4. Weight + lexical tiebreak (highest weight wins among unconditional edges)
+//   5. Single unconditional edge (trivial case)
+//
+// Weight is a float (default 1.0). Higher = higher priority. Lexicographic
+// order on target node ID breaks exact ties.
+//
+// Use case: a router node where you want a "preferred default" path to be
+// taken unless conditions explicitly override it.  Here, the review node can
+// send the output to either a "fast ship" path (weight=2.0) or a "thorough
+// review" path (weight=1.0) — fast ship wins when both are unconditional.
+//
+// Run: uv run python -m attractor_pipeline.cli run examples/edge_weights.dot
+
+digraph EdgeWeights {
+    graph [goal="Write and route a merge sort implementation"]
+
+    start [shape=Mdiamond]
+
+    // Implement the algorithm
+    implement [
+        shape=box,
+        prompt="Write a Python merge sort implementation. Include a merge_sort(arr) function and a merge(left, right) helper. Write it cleanly."
+    ]
+
+    // Routing decision node — the review node's output drives routing.
+    // No conditions on any outgoing edge; weight determines priority.
+    review [
+        shape=box,
+        prompt="Review this merge sort:\n${codergen.implement.output}\n\nOutput EXACTLY one word: SHIP (if production-ready) or POLISH (needs minor improvements)."
+    ]
+
+    // Preferred paths with different weights
+    polish [
+        shape=box,
+        prompt="Polish this implementation based on any code quality concerns:\n${codergen.implement.output}\n\nReturn the improved version."
+    ]
+
+    ship [
+        shape=box,
+        prompt="Write a brief usage example and docstring for:\n${codergen.implement.output}"
+    ]
+
+    done [shape=Msquare]
+
+    // ── Flow ─────────────────────────────────────────────────────────────────
+
+    start     -> implement
+    implement -> review
+
+    // SHIP path has weight=2.0 (preferred default).
+    // POLISH path has weight=1.0.
+    // When the model outputs "SHIP" → preferred_label match → ship wins.
+    // When the model outputs "POLISH" → preferred_label match → polish wins.
+    // If neither label matches → weight kicks in → ship wins (weight 2.0 > 1.0).
+
+    review -> ship   [label="SHIP",   weight=2.0]
+    review -> polish [label="POLISH", weight=1.0]
+
+    ship   -> done
+    polish -> done
+}

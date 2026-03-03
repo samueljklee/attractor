@@ -1,0 +1,95 @@
+// First-Success Parallel Race
+//
+// Demonstrates join_policy=first_success on a component (fan-out) node.
+// Three LLM agents race to implement the same problem — the first one to
+// succeed wins; the others are cancelled.
+//
+// Contrast with parallel_approaches.dot (WAIT_ALL): that pattern collects
+// all results and picks the best. This pattern returns immediately when any
+// branch succeeds — useful when you care about latency over quality.
+//
+// Shape summary:
+//   component (fan-out)     — spawns branches concurrently
+//   tripleoctagon (fan-in)  — collects results (or in this case, just one)
+//   box                     — LLM codergen node
+//
+// Run: uv run python -m attractor_pipeline.cli run examples/first_success.dot
+//      (requires ANTHROPIC_API_KEY or OPENAI_API_KEY or GOOGLE_API_KEY)
+
+digraph FirstSuccess {
+    graph [
+        goal="Implement a binary search function in Python"
+        model_stylesheet="
+            * { llm_model: claude-sonnet-4-5; llm_provider: anthropic; }
+            .fast   { llm_model: claude-sonnet-4-5; llm_provider: anthropic; }
+            .alt    { llm_model: gpt-5.2-mini;     llm_provider: openai; }
+            .flash  { llm_model: gemini-3-flash-preview; llm_provider: gemini; }
+        "
+    ]
+
+    start [shape=Mdiamond]
+
+    // ── Fan-out: all three branches start simultaneously ─────────────────────
+    //
+    // join_policy=first_success: return as soon as ONE branch completes with
+    // outcome=success. All other branches are cancelled.
+    //
+    // max_parallel=3: allow all 3 to run concurrently (default is unlimited
+    // already; shown here for documentation purposes).
+
+    race [
+        shape=component,
+        label="Race 3 models",
+        join_policy="first_success",
+        max_parallel="3"
+    ]
+
+    // Branch A: Anthropic (fast tier)
+    impl_claude [
+        shape=box,
+        class="fast",
+        label="Claude",
+        prompt="Implement binary_search(arr: list[int], target: int) -> int in Python. Return the index or -1 if not found. Write only the function, no imports needed."
+    ]
+
+    // Branch B: OpenAI
+    impl_openai [
+        shape=box,
+        class="alt",
+        label="OpenAI",
+        prompt="Implement binary_search(arr: list[int], target: int) -> int in Python. Return the index or -1 if not found. Write only the function, no imports needed."
+    ]
+
+    // Branch C: Gemini Flash
+    impl_gemini [
+        shape=box,
+        class="flash",
+        label="Gemini",
+        prompt="Implement binary_search(arr: list[int], target: int) -> int in Python. Return the index or -1 if not found. Write only the function, no imports needed."
+    ]
+
+    // ── Fan-in: collect the winner ───────────────────────────────────────────
+    //
+    // With first_success, winner.output already contains the winning response.
+    // The fan-in node can evaluate or just pass it through.
+
+    winner [
+        shape=tripleoctagon,
+        label="Winner"
+    ]
+
+    // ── Wrap up ──────────────────────────────────────────────────────────────
+
+    done [shape=Msquare, label="Done"]
+
+    // ── Flow ─────────────────────────────────────────────────────────────────
+
+    start       -> race
+    race        -> impl_claude
+    race        -> impl_openai
+    race        -> impl_gemini
+    impl_claude -> winner
+    impl_openai -> winner
+    impl_gemini -> winner
+    winner      -> done
+}

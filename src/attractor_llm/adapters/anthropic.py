@@ -148,6 +148,11 @@ class AnthropicAdapter:
             }
             # Thinking requires removing temperature
             body.pop("temperature", None)
+            # Anthropic requires max_tokens > budget_tokens. If max_tokens was
+            # left at the default (equal to budget), bump it to budget + 4096
+            # to leave room for the visible response text after thinking.
+            if body["max_tokens"] <= budget:
+                body["max_tokens"] = budget + 4096
 
         # Beta headers
         beta_headers = anthropic_opts.get("beta_headers", [])

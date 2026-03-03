@@ -23,7 +23,7 @@ class TestModelCatalog:
 
     def test_list_all_models(self):
         models = list_models()
-        assert len(models) == 7
+        assert len(models) == 9  # 2 anthropic + 3 openai + 4 gemini
 
     def test_list_by_provider(self):
         anthropic = list_models("anthropic")
@@ -35,7 +35,7 @@ class TestModelCatalog:
         assert all(m.provider == "openai" for m in openai)
 
         gemini = list_models("gemini")
-        assert len(gemini) == 2
+        assert len(gemini) == 4  # 3-pro, 3-flash, 2.5-pro, 2.5-flash
 
     def test_default_models(self):
         assert get_default_model("anthropic").id == "claude-sonnet-4-5"

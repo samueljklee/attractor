@@ -1,0 +1,98 @@
+// Compound Conditions, Context Variables, and ${braced} Expansion
+//
+// Demonstrates three advanced features of the attractor DOT dialect:
+//
+//  1. COMPOUND CONDITIONS (&&)
+//     Edge conditions support && to require multiple context checks.
+//     All clauses must hold for the edge to match.
+//
+//       condition="outcome = success && tool.verify.output = pass"
+//
+//  2. DOTTED CONTEXT VARIABLE LOOKUP
+//     Conditions reference any key in the pipeline context dict:
+//       codergen.<id>.output   — LLM node text output
+//       tool.<id>.output       — shell command stdout (always set, even on fail)
+//     If the key is missing, the clause evaluates to false.
+//
+//  3. ${BRACED} VARIABLE EXPANSION IN PROMPTS
+//     Both $var and ${var} work in prompts and tool commands.
+//     The braced form is needed when the variable name is immediately
+//     followed by non-whitespace text:
+//
+//       "found in ${count}% of cases"  ← ${count} is unambiguous
+//       "found in $count% of cases"    ← $count% would look for key "count%"
+//
+//
+// Pipeline:
+//   1. LLM writes a Python function to reverse_str.py (box node)
+//   2. Tool node compiles the file AND counts the functions (parallelogram)
+//      Outputs "pass" or "fail" (single word for clean condition matching)
+//   3. Compound condition routes to done or fix:
+//        done: outcome=success AND tool output="pass"
+//        fix:  tool output="fail"  (any failure)
+//
+// Run: uv run python -m attractor_pipeline.cli run examples/compound_conditions.dot
+
+digraph CompoundConditions {
+    graph [
+        goal="Write a Python module with a string reversal utility"
+        max_goal_gate_redirects="3"
+    ]
+
+    start [shape=Mdiamond]
+
+    // ── Step 1: LLM writes the code to a file ───────────────────────────────
+    //
+    // We use ${goal} (braced form) embedded in the middle of a sentence.
+
+    implement [
+        shape=box,
+        prompt="Goal: ${goal}\n\nWrite a Python module and save it as reverse_str.py.\n\nThe module must export:\n  def reverse_str(s: str) -> str   — returns the string reversed\n  def is_palindrome(s: str) -> bool — returns True if s == reverse_str(s)\n\nNo main block, no tests — just the two functions with docstrings."
+    ]
+
+    // ── Step 2: Tool node verifies the written file ──────────────────────────
+    //
+    // Checks two things and outputs a SINGLE word ("pass" or "fail") to stdout.
+    // Exit code 0 → outcome=success, exit code 1 → outcome=fail.
+    // The output is stored as tool.verify.output regardless of exit code.
+
+    verify [
+        shape=parallelogram,
+        label="Compile + count",
+        tool_command="python3 -c \"\nimport ast, sys\ntry:\n    with open('reverse_str.py') as f:\n        src = f.read()\n    tree = ast.parse(src)\n    fns = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]\n    if 'reverse_str' not in fns or 'is_palindrome' not in fns:\n        print('fail')\n        print(f'Missing functions. Found: {fns}', file=sys.stderr)\n        sys.exit(1)\n    # Quick smoke test: import and call\n    import importlib.util, os\n    spec = importlib.util.spec_from_file_location('reverse_str', 'reverse_str.py')\n    mod = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(mod)\n    assert mod.reverse_str('hello') == 'olleh'\n    assert mod.is_palindrome('racecar') is True\n    assert mod.is_palindrome('hello') is False\n    print('pass')\nexcept Exception as e:\n    print('fail')\n    print(f'Error: {e}', file=sys.stderr)\n    sys.exit(1)\n\"",
+        timeout="15s"
+    ]
+
+    // ── Fix node: only reached when verify outputs "fail" ───────────────────
+    //
+    // $tool.verify.output expands to the tool's stdout ("fail")
+    // $codergen.implement.output expands to what the LLM wrote
+
+    fix [
+        shape=box,
+        prompt="The module failed verification.\n\nVerification result: $tool.verify.output\n\nPrevious implementation:\n$codergen.implement.output\n\nFix the module. Ensure both reverse_str() and is_palindrome() are present and correct. Overwrite reverse_str.py."
+    ]
+
+    done [shape=Msquare, label="Verified"]
+
+    // ── Flow with compound conditions ─────────────────────────────────────────
+    //
+    // COMPOUND CONDITION on the done edge:
+    //   outcome = success   → tool exited 0
+    //   AND
+    //   tool.verify.output = pass  → tool explicitly printed "pass"
+    //
+    // Both must hold. This guards against tool nodes that exit 0 but signal
+    // failure through their output content.
+
+    start     -> implement
+    implement -> verify
+
+    verify -> done [
+        condition="outcome = success && tool.verify.output = pass",
+        label="pass"
+    ]
+    verify -> fix [condition="outcome = fail", label="fail"]
+
+    fix -> verify
+}

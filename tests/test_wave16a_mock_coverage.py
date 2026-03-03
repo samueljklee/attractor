@@ -222,9 +222,9 @@ SCENARIOS = [
 ]
 PROVIDERS = ["openai", "anthropic", "gemini"]
 MODELS = {
-    "openai": "gpt-4.1-mini",
+    "openai": "gpt-5.2",          # gpt-4.1-mini does not support reasoning.effort
     "anthropic": "claude-sonnet-4-5",
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-pro",   # gemini-2.0-flash does not support thinkingConfig
 }
 
 _PARITY_CFG = ProviderConfig(api_key="test-key-parity")
@@ -409,7 +409,12 @@ async def _run_parity_cell(scenario: str, provider_name: str) -> None:  # noqa: 
                 assert thinking.get("type") == "enabled"
                 assert thinking.get("budget_tokens", 0) > 0
             else:
-                budget = body.get("thinkingConfig", {}).get("thinkingBudget", 0)
+                # thinkingConfig is nested inside generationConfig for Gemini
+                budget = (
+                    body.get("generationConfig", {})
+                    .get("thinkingConfig", {})
+                    .get("thinkingBudget", 0)
+                )
                 assert budget > 0
 
         case "image_input_base64":

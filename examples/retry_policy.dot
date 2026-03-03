@@ -1,0 +1,80 @@
+// Retry Policies — Named Presets and Per-Node Overrides
+//
+// Demonstrates the per-node retry system. When a box node fails, the pipeline
+// engine can automatically retry it with configurable backoff before moving
+// to edge selection.
+//
+// Available retry_preset values (spec §5.4):
+//   none      — max_retries=0,  no delay          (default: stop immediately)
+//   standard  — max_retries=3,  1s→2s→4s (jitter) (good default for LLM work)
+//   aggressive — max_retries=5, 0.5s→0.75s→1.1s   (short tasks, fast feedback)
+//   linear    — max_retries=3,  2s→4s→6s (no jitter, deterministic)
+//   patient   — max_retries=10, 5s→10s→20s        (long waits, flaky backends)
+//
+// max_retries overrides the preset's count without changing the backoff curve.
+//
+// This pipeline demonstrates "standard" on a node that validates code —
+// if the LLM produces invalid Python on the first try, it retries up to 3×
+// before giving up and routing to a fallback.
+//
+// Run: uv run python -m attractor_pipeline.cli run examples/retry_policy.dot
+
+digraph RetryPolicy {
+    graph [
+        goal="Write a Python function that validates an email address using regex"
+        max_goal_gate_redirects="2"
+    ]
+
+    start [shape=Mdiamond]
+
+    // Standard implementation node (no special retry — default: none)
+    implement [
+        shape=box,
+        prompt="Write a Python function validate_email(email: str) -> bool that uses re to check if the string is a valid email address. Return True/False. Write only the function."
+    ]
+
+    // Validation node with retry_preset="standard":
+    //   - If validation fails (LLM output is wrong/malformed), retry up to 3×
+    //   - Backoff: 1s → 2s → 4s (with jitter) between retries
+    //   - max_retries=2 overrides the preset's default (3) — only 2 retries here
+    //
+    // The LLM reviews the implementation for correctness.  On FAIL outcome,
+    // the engine retries this node before advancing to edge selection.
+
+    validate [
+        shape=box,
+        retry_preset="standard",
+        max_retries="2",
+        prompt="Review this Python function for email validation correctness:\n\n${codergen.implement.output}\n\nTest it mentally against: user@example.com (valid), not-an-email (invalid), user@.com (invalid).\n\nRespond with ONLY one word: PASS or FAIL\n\nIf PASS: the implementation is correct.\nIf FAIL: explain briefly what is wrong (1 sentence)."
+    ]
+
+    // Fix node — only reached if validate exhausts retries and still says FAIL
+    fix [
+        shape=box,
+        prompt="The email validator has an issue. Reviewer said:\n${codergen.validate.output}\n\nOriginal code:\n${codergen.implement.output}\n\nWrite a corrected version that properly validates emails."
+    ]
+
+    done [
+        shape=Msquare,
+        label="Validated",
+        goal_gate="outcome = success",
+        retry_target="implement"
+    ]
+
+    // ── Flow ─────────────────────────────────────────────────────────────────
+    //
+    // Note: outcome = success/fail here reflects what the validate node's
+    // handler returned, NOT the PASS/FAIL text.  The validate node always
+    // returns outcome=success (the LLM responded).  Use edge label routing
+    // to drive the PASS/FAIL text into edge selection.
+
+    start     -> implement
+    implement -> validate
+
+    // Route on the review verdict via preferred_label matching (edge selection step 2)
+    validate -> done [label="PASS", condition="outcome = success"]
+    validate -> fix  [label="FAIL", condition="outcome = success"]
+    validate -> fix  [condition="outcome = fail"]   // retry exhausted
+
+    fix -> done
+}

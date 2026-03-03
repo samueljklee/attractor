@@ -158,9 +158,11 @@ class ToolHandler:
         if result.stderr:
             output += f"\nSTDERR:\n{result.stderr}"
 
+        # Always store output in context so downstream nodes can reference it
+        # with $tool.<id>.output — even when the command fails.
+        context[f"tool.{node.id}.output"] = output.strip()
+
         if result.returncode == 0:
-            # Store output in context for downstream nodes
-            context[f"tool.{node.id}.output"] = output.strip()
             return HandlerResult(
                 status=Outcome.SUCCESS,
                 output=output,

@@ -226,10 +226,25 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         print(f"Error: Set {env_var} environment variable")
         sys.exit(1)
 
-    # Set up LLM client
+    # Set up LLM client — register ALL available providers so per-node
+    # llm_provider= overrides work without needing multiple CLI invocations.
     client = Client()
-    adapter = _create_adapter(provider, api_key)
-    client.register_adapter(provider, adapter)
+    all_providers = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GOOGLE_API_KEY",
+    }
+    registered = []
+    for p, env in all_providers.items():
+        key = os.environ.get(env)
+        if key:
+            client.register_adapter(p, _create_adapter(p, key))
+            registered.append(p)
+    # If the selected provider wasn't auto-detected above (e.g. custom key),
+    # ensure it's registered using the key we already validated.
+    if provider not in registered:
+        client.register_adapter(provider, _create_adapter(provider, api_key))
+        registered.append(provider)
     print(f"Provider: {provider} ({model})")
 
     # Set up execution environment

@@ -1,0 +1,75 @@
+// Tool Node (parallelogram) — Shell Command Execution
+//
+// Demonstrates shape=parallelogram nodes that execute shell commands directly
+// without an LLM. Results are stored in tool.<id>.output and the exit code
+// drives edge routing (outcome = success / fail).
+//
+// Pattern:
+//   1. Write code with the LLM (box)
+//   2. Run the test suite with a tool node (parallelogram) — no LLM needed
+//   3. Branch on pass/fail: fix if tests fail, ship if they pass
+//
+// The tool node uses the canonical `tool_command` attribute (spec §4.10).
+// Variable expansion is available: ${codergen.implement.output} etc.
+//
+// Run: uv run python -m attractor_pipeline.cli run examples/tool_node.dot
+
+digraph ToolNode {
+    graph [
+        goal="Write a Python function that reverses a string, then verify it passes tests"
+        max_goal_gate_redirects="3"
+    ]
+
+    start [shape=Mdiamond]
+
+    // ── Step 1: LLM writes the code ─────────────────────────────────────────
+
+    implement [
+        shape=box,
+        prompt="Write a Python module called reverse_string.py that exports a single function reverse_string(s: str) -> str. Write the file directly. Keep it simple — just the function, no main block."
+    ]
+
+    // ── Step 2: Tool node runs the tests ────────────────────────────────────
+    //
+    // shape=parallelogram executes a shell command.
+    // tool_command: the command to run (variable expansion available)
+    // timeout: how long to wait (default 120s)
+    //
+    // outcome = success  ⟺  exit code 0
+    // outcome = fail     ⟺  exit code ≠ 0
+    //
+    // The output is stored in context as tool.run_tests.output
+
+    run_tests [
+        shape=parallelogram,
+        label="Run tests",
+        tool_command="python3 -c \"\nimport sys\ntry:\n    from reverse_string import reverse_string\n    assert reverse_string('hello') == 'olleh', 'basic reverse failed'\n    assert reverse_string('') == '', 'empty string failed'\n    assert reverse_string('a') == 'a', 'single char failed'\n    assert reverse_string('racecar') == 'racecar', 'palindrome failed'\n    print('All 4 tests passed')\nexcept Exception as e:\n    print(f'FAIL: {e}', file=sys.stderr)\n    sys.exit(1)\n\"",
+        timeout="30s"
+    ]
+
+    // ── Step 3: Branch on test result ───────────────────────────────────────
+
+    fix [
+        shape=box,
+        prompt="The tests failed. Test output:\n${tool.run_tests.output}\n\nFix the reverse_string.py file so all tests pass. Rewrite it completely if needed."
+    ]
+
+    done [
+        shape=Msquare,
+        label="Tests passing",
+        goal_gate="outcome = success",
+        retry_target="implement"
+    ]
+
+    // ── Flow ─────────────────────────────────────────────────────────────────
+
+    start     -> implement
+    implement -> run_tests
+
+    // Route on tool exit code
+    run_tests -> done  [condition="outcome = success", label="pass"]
+    run_tests -> fix   [condition="outcome = fail",    label="fail"]
+
+    // After fixing, run tests again
+    fix -> run_tests
+}

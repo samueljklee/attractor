@@ -148,11 +148,18 @@ class GeminiAdapter:
                     }
             body["toolConfig"] = tool_config
 
-        # Thinking config (reasoning_effort mapping)
+        # Thinking config (reasoning_effort mapping).
+        # Must go inside generationConfig.thinkingConfig, not at the top level.
+        # Only send when the model declares supports_reasoning=True in the catalog.
         if request.reasoning_effort:
-            body["thinkingConfig"] = {
-                "thinkingBudget": self._thinking_budget(request.reasoning_effort),
-            }
+            from attractor_llm.catalog import get_model_info
+            model_info = get_model_info(request.model)
+            if model_info is None or model_info.supports_reasoning:
+                if "generationConfig" not in body:
+                    body["generationConfig"] = {}
+                body["generationConfig"]["thinkingConfig"] = {
+                    "thinkingBudget": self._thinking_budget(request.reasoning_effort),
+                }
 
         # Provider-specific options
         gemini_opts = (request.provider_options or {}).get("gemini", {})
