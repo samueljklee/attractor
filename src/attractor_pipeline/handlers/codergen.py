@@ -10,6 +10,7 @@ Spec reference: attractor-spec §4.5.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -76,6 +77,7 @@ class CodergenHandler:
             return HandlerResult(
                 status=Outcome.SUCCESS,
                 output=f"[No backend configured] Prompt: {prompt[:200]}",
+                context_updates={f"_artifact_prompt.{node.id}": prompt},
                 notes="Codergen executed without backend (dry run)",
             )
 
@@ -93,10 +95,13 @@ class CodergenHandler:
                 failure_reason=f"{type(exc).__name__}: {exc}",
             )
 
-        # Normalize result to HandlerResult
+        # Normalize result to HandlerResult, collecting context writes so the
+        # engine applies them at §3.3 step 4 rather than this handler.
+        updates: dict[str, Any] = {}
+
         if isinstance(result, str):
-            # Plain string -> wrap as SUCCESS
-            context[f"codergen.{node.id}.output"] = result
+            # Plain string → wrap as SUCCESS
+            updates[f"codergen.{node.id}.output"] = result
             handler_result = HandlerResult(
                 status=Outcome.SUCCESS,
                 output=result,
@@ -104,14 +109,20 @@ class CodergenHandler:
             )
         else:
             # Already a HandlerResult
-            if result.output:
-                context[f"codergen.{node.id}.output"] = result.output
+            # Only surface output on SUCCESS — a FAIL result with output text
+            # should not pollute the context key downstream nodes depend on.
+            if result.output and result.status == Outcome.SUCCESS:
+                updates[f"codergen.{node.id}.output"] = result.output
             handler_result = result
 
         # Store expanded prompt for engine-level artifact writing (Spec §5.6).
-        # The engine writes artifacts for ALL nodes; we just stash the
-        # LLM-expanded prompt here so the engine can include it.
-        context[f"_artifact_prompt.{node.id}"] = prompt
+        updates[f"_artifact_prompt.{node.id}"] = prompt
+
+        # Infrastructure keys (updates) must win over anything the backend
+        # returned in context_updates — prevents backend from clobbering
+        # internal keys like _artifact_prompt.  Right-side wins on collision.
+        merged = {**handler_result.context_updates, **updates}
+        handler_result = replace(handler_result, context_updates=merged)
 
         return handler_result
 

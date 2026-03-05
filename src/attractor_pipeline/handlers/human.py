@@ -320,13 +320,12 @@ class HumanHandler:
                 failure_reason=f"Interviewer error: {exc}",
             )
 
-        # Store response in context
-        context[f"human.{node.id}.response"] = response
-
-        # Use response as preferred_label for edge selection
+        # Use response as preferred_label for edge selection.
+        # Store in context_updates — engine applies at §3.3 step 4.
         return HandlerResult(
             status=Outcome.SUCCESS,
             preferred_label=response,
             output=response,
+            context_updates={f"human.{node.id}.response": response},
             notes=f"Human responded: {response}",
         )

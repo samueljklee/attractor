@@ -147,10 +147,6 @@ class ManagerHandler:
 
             # Check success condition
             if self._check_success(child_result, success_condition):
-                # Store results in context
-                context[f"manager.{node.id}.iterations"] = iteration_results
-                context[f"manager.{node.id}.final_status"] = "success"
-
                 return HandlerResult(
                     status=Outcome.SUCCESS,
                     output=str(
@@ -159,6 +155,10 @@ class ManagerHandler:
                             child_result.context.get("codergen.code.output", ""),
                         )
                     ),
+                    context_updates={
+                        f"manager.{node.id}.iterations": iteration_results,
+                        f"manager.{node.id}.final_status": "success",
+                    },
                     notes=(
                         f"Manager '{node.id}': child pipeline succeeded "
                         f"after {iteration} iteration(s) ({duration:.1f}s)"
@@ -172,16 +172,18 @@ class ManagerHandler:
             except Exception:  # noqa: BLE001
                 break
 
-        # Exhausted iterations
-        context[f"manager.{node.id}.iterations"] = iteration_results
-        context[f"manager.{node.id}.final_status"] = "failed"
-
+        # Exhausted iterations — context_updates on FAIL path too so engine
+        # applies them consistently (spec §3.3 step 4, no outcome gating).
         return HandlerResult(
             status=Outcome.FAIL,
             failure_reason=(
                 f"Manager '{node.id}': child pipeline did not succeed "
                 f"after {max_iterations} iteration(s)"
             ),
+            context_updates={
+                f"manager.{node.id}.iterations": iteration_results,
+                f"manager.{node.id}.final_status": "failed",
+            },
             notes=str(iteration_results),
         )
 

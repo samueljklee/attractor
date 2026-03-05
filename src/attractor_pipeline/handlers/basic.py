@@ -82,12 +82,14 @@ class ConditionalHandler:
         logs_root: Path | None,
         abort_signal: AbortSignal | None,
     ) -> HandlerResult:
-        # If the node has a prompt, evaluate it as context
+        # Return as context_updates — spec §3.3 step 4: engine owns context mutation.
+        updates: dict[str, Any] = {}
         if node.prompt:
-            context[f"conditional.{node.id}"] = node.prompt
+            updates[f"conditional.{node.id}"] = node.prompt
 
         return HandlerResult(
             status=Outcome.SUCCESS,
+            context_updates=updates,
             notes=f"Conditional branch at '{node.id}'",
         )
 
@@ -159,14 +161,11 @@ class ToolHandler:
             output += f"\nSTDERR:\n{result.stderr}"
 
         if result.returncode == 0:
-            # Spec §4.10: context_updates only on SUCCESS.
-            # tool.<id>.output is only available to downstream nodes on the
-            # success path (outcome = success edges). Fix nodes on the failure
-            # path should use $codergen.<id>.output or other context already set.
-            context[f"tool.{node.id}.output"] = output.strip()
+            # Spec §4.10: context_updates only on SUCCESS — engine applies them.
             return HandlerResult(
                 status=Outcome.SUCCESS,
                 output=output,
+                context_updates={f"tool.{node.id}.output": output.strip()},
                 notes="Command succeeded (exit 0)",
             )
 

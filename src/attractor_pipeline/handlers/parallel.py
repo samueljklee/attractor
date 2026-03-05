@@ -191,8 +191,11 @@ class ParallelHandler:
             else:
                 branch_results.append(r)
 
-        # Store branch results in context for fan-in
-        context[f"parallel.{node.id}.results"] = [
+        # Collect all context updates — engine applies them at §3.3 step 4.
+        ctx_updates: dict[str, Any] = {}
+
+        # Branch summary for fan-in handler to read
+        ctx_updates[f"parallel.{node.id}.results"] = [
             {
                 "branch_id": br.branch_id,
                 "target": br.target_node_id,
@@ -205,12 +208,14 @@ class ParallelHandler:
             for br in branch_results
         ]
 
-        # Also merge branch context updates into parent
-        # (later branches override earlier for same keys)
+        # Merge successful branch context into parent — filter to success-only
+        # to prevent failed-branch outputs from polluting the parent context.
         for br in branch_results:
+            if br.result.status != Outcome.SUCCESS:
+                continue
             for key, value in br.context.items():
                 if key.startswith("codergen.") or key.startswith("tool."):
-                    context[f"{br.branch_id}.{key}"] = value
+                    ctx_updates[f"{br.branch_id}.{key}"] = value
 
         # Determine overall outcome
         successes = [br for br in branch_results if br.result.status == Outcome.SUCCESS]
@@ -234,13 +239,29 @@ class ParallelHandler:
                     f"Parallel: {len(successes)}/{len(branch_results)} "
                     f"branches succeeded (first_success policy)"
                 ),
-                context_updates=best.context,
+                context_updates={
+                    **ctx_updates,
+                    # Surface winning branch outputs directly (unnamespaced) so
+                    # downstream nodes can use $codergen.x.output without the
+                    # branch prefix.  Exclude internal keys (e.g. _branch_id).
+                    # Only surface codergen/tool outputs from the winning branch.
+                    # The `branch_N.*` namespace prefix is written to ctx_updates
+                    # (above), not into branch_context itself, so the outer prefix
+                    # filter (`codergen.` / `tool.`) is sufficient to exclude all
+                    # internal and infrastructure keys.
+                    **{
+                        k: v
+                        for k, v in best.context.items()
+                        if k.startswith("codergen.") or k.startswith("tool.")
+                    },
+                },
             )
 
         if not failures:
             # All succeeded
             return HandlerResult(
                 status=Outcome.SUCCESS,
+                context_updates=ctx_updates,
                 notes=(f"Parallel: all {len(branch_results)} branches succeeded"),
             )
 
@@ -252,11 +273,13 @@ class ParallelHandler:
                 failure_reason=(
                     f"All {len(branch_results)} branches failed: " + "; ".join(reasons)
                 ),
+                context_updates=ctx_updates,
             )
 
         # Mixed: some succeeded, some failed
         return HandlerResult(
             status=Outcome.PARTIAL_SUCCESS,
+            context_updates=ctx_updates,
             notes=(
                 f"Parallel: {len(successes)}/{len(branch_results)} "
                 f"branches succeeded, {len(failures)} failed"
