@@ -126,3 +126,26 @@ amplifier recipe execute recipes/wave-implementation.yaml \
 
 Waves 9-13 complete (28 of 58 items). Remaining: Waves 14-16b (30 items).
 Wave plan at: `docs/plans/2026-02-17-attractor-spec-compliance-waves.json`
+
+## Known Spec Extensions and API Gaps
+
+These are intentional deviations from the spec, either extending it or
+documenting places where the live API does not match the spec. Any AI
+assistant working on this project must not silently revert these without
+understanding the rationale.
+
+### Spec Extensions (we added, spec does not define)
+
+| What | Where | Why | Spec ref |
+|------|-------|-----|----------|
+| `knowledge_cutoff: str \| None` field on `ModelInfo` | `catalog.py` | coding-agent-loop-spec §6.3 requires `Knowledge cutoff: {date}` in the `<environment>` block. No provider API exposes this at runtime, so we hardcode it per model in the catalog. The unified-llm-spec §2.9 `ModelInfo` schema does not include this field — pending spec amendment. | §6.3 agent loop |
+| `gpt-4.1-mini` catalog entry | `catalog.py` | Real working OpenAI model used in tests and examples. Not in spec §2.9 but confirmed live. | — |
+| `gemini-2.5-pro`, `gemini-2.5-flash` catalog entries | `catalog.py` | Real working Gemini models with confirmed `generationConfig.thinkingConfig` support. Not in spec §2.9 but confirmed live. | — |
+
+### API vs Spec Gaps (spec says X, live API says Y)
+
+| What | Spec says | API says | Status |
+|------|-----------|----------|--------|
+| `gpt-5.2-mini` | Exists, `supports_reasoning=true` | Returns 404 — model not found | Kept in catalog per spec; use `gpt-5.2` for live reasoning calls |
+| `gemini-3-pro-preview`, `gemini-3-flash-preview` reasoning | `supports_reasoning=true` | v1beta API rejects `thinkingConfig` for these model IDs | Catalog follows spec; use `gemini-2.5-pro/flash` for live reasoning calls |
+| Gemini `thinkingConfig` placement | §3.9 says `thinkingConfig` param | Must be `generationConfig.thinkingConfig` in v1beta API | Adapter uses `generationConfig.thinkingConfig` (correct API form) |

@@ -1,8 +1,9 @@
 // Tool Node (parallelogram) — Shell Command Execution
 //
 // Demonstrates shape=parallelogram nodes that execute shell commands directly
-// without an LLM. Results are stored in tool.<id>.output and the exit code
-// drives edge routing (outcome = success / fail).
+// without an LLM. On success, the output is stored as tool.<id>.output.
+// On failure, only the exit code is available (outcome = fail); fix nodes
+// should use $codergen.<id>.output or restate the requirements explicitly.
 //
 // Pattern:
 //   1. Write code with the LLM (box)
@@ -38,7 +39,8 @@ digraph ToolNode {
     // outcome = success  ⟺  exit code 0
     // outcome = fail     ⟺  exit code ≠ 0
     //
-    // The output is stored in context as tool.run_tests.output
+    // On success (exit 0): output stored as tool.run_tests.output in context.
+    // On failure (exit ≠ 0): outcome=fail, no context key set (spec §4.10).
 
     run_tests [
         shape=parallelogram,
@@ -49,9 +51,12 @@ digraph ToolNode {
 
     // ── Step 3: Branch on test result ───────────────────────────────────────
 
+    // Note: tool.run_tests.output is NOT available here — spec §4.10 only
+    // stores tool output on success. The fix prompt restates the test
+    // requirements explicitly so the LLM knows what to correct.
     fix [
         shape=box,
-        prompt="The tests failed. Test output:\n${tool.run_tests.output}\n\nFix the reverse_string.py file so all tests pass. Rewrite it completely if needed."
+        prompt="The test suite for reverse_string.py failed.\n\nFix the file so all four assertions pass:\n  reverse_string('hello') == 'olleh'\n  reverse_string('') == ''\n  reverse_string('a') == 'a'\n  reverse_string('racecar') == 'racecar'\n\nRewrite the function completely if needed."
     ]
 
     done [

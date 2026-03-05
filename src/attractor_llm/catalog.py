@@ -61,6 +61,22 @@ MODEL_CATALOG: list[ModelInfo] = [
         aliases=("gpt-5", "5.2"),
         knowledge_cutoff="2024-04",
     ),
+    # Spec §2.9 defines gpt-5.2-mini with supports_reasoning=true.
+    # NOTE: as of this writing the live OpenAI API returns 404 for this model ID.
+    # The entry is kept per spec; use gpt-5.2 or gpt-4.1-mini for live calls.
+    ModelInfo(
+        id="gpt-5.2-mini",
+        provider="openai",
+        display_name="GPT-5.2 Mini",
+        context_window=1_047_576,
+        supports_tools=True,
+        supports_vision=True,
+        supports_reasoning=True,
+        aliases=("gpt-mini", "5.2-mini"),
+        knowledge_cutoff="2024-04",
+    ),
+    # gpt-4.1-mini: not in spec §2.9 but verified live in OpenAI API.
+    # Preferred for tests and examples requiring a real lightweight OpenAI model.
     ModelInfo(
         id="gpt-4.1-mini",
         provider="openai",
@@ -69,7 +85,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         supports_tools=True,
         supports_vision=True,
         supports_reasoning=False,
-        aliases=("gpt-mini", "4.1-mini"),
+        aliases=("4.1-mini",),
         knowledge_cutoff="2024-04",
     ),
     ModelInfo(
@@ -83,6 +99,10 @@ MODEL_CATALOG: list[ModelInfo] = [
         aliases=("gpt-codex", "5.2-codex"),
         knowledge_cutoff="2024-04",
     ),
+    # Spec §2.9 defines both Gemini 3 models with supports_reasoning=true.
+    # NOTE: as of this writing, the v1beta API rejects thinkingConfig for these
+    # model IDs — use gemini-2.5-pro / gemini-2.5-flash for live reasoning calls.
+    # Adapter places thinkingConfig inside generationConfig per §3.9.
     ModelInfo(
         id="gemini-3-pro-preview",
         provider="gemini",
@@ -90,7 +110,7 @@ MODEL_CATALOG: list[ModelInfo] = [
         context_window=1_048_576,
         supports_tools=True,
         supports_vision=True,
-        supports_reasoning=False,  # thinkingConfig not supported via v1beta API
+        supports_reasoning=True,
         aliases=("gemini-pro", "3-pro"),
         knowledge_cutoff="2024-12",
     ),
@@ -101,11 +121,12 @@ MODEL_CATALOG: list[ModelInfo] = [
         context_window=1_048_576,
         supports_tools=True,
         supports_vision=True,
-        supports_reasoning=False,  # thinkingConfig not supported via v1beta API
+        supports_reasoning=True,
         aliases=("gemini-flash", "3-flash", "flash"),
         knowledge_cutoff="2024-12",
     ),
-    # Gemini 2.5 models — support generationConfig.thinkingConfig
+    # gemini-2.5-pro/flash: not in spec §2.9 but verified live with
+    # generationConfig.thinkingConfig. Use these for actual reasoning calls.
     ModelInfo(
         id="gemini-2.5-pro",
         provider="gemini",

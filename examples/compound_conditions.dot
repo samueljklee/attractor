@@ -9,27 +9,30 @@
 //       condition="outcome = success && tool.verify.output = pass"
 //
 //  2. DOTTED CONTEXT VARIABLE LOOKUP
-//     Conditions reference any key in the pipeline context dict:
-//       codergen.<id>.output   — LLM node text output
-//       tool.<id>.output       — shell command stdout (always set, even on fail)
+//     Conditions reference any key in the pipeline context dict.
+//     Per spec §4.10, tool.<id>.output is ONLY set when exit code = 0:
+//
+//       tool.<id>.output    — set on success only (outcome = success edges)
+//       codergen.<id>.output — always set after a box node completes
+//
 //     If the key is missing, the clause evaluates to false.
 //
 //  3. ${BRACED} VARIABLE EXPANSION IN PROMPTS
 //     Both $var and ${var} work in prompts and tool commands.
-//     The braced form is needed when the variable name is immediately
-//     followed by non-whitespace text:
+//     The braced form is needed when the variable is adjacent to other text:
 //
 //       "found in ${count}% of cases"  ← ${count} is unambiguous
 //       "found in $count% of cases"    ← $count% would look for key "count%"
 //
 //
 // Pipeline:
-//   1. LLM writes a Python function to reverse_str.py (box node)
-//   2. Tool node compiles the file AND counts the functions (parallelogram)
-//      Outputs "pass" or "fail" (single word for clean condition matching)
+//   1. LLM writes a Python module (box node) — output in codergen.implement.output
+//   2. Tool node compiles + smoke-tests the file (parallelogram)
+//      On success (exit 0): prints "pass", sets tool.verify.output = "pass"
+//      On failure (exit 1): prints "fail" to stderr, tool.verify.output NOT set
 //   3. Compound condition routes to done or fix:
-//        done: outcome=success AND tool output="pass"
-//        fix:  tool output="fail"  (any failure)
+//        done: outcome=success AND tool.verify.output="pass"
+//        fix:  outcome=fail → use $codergen.implement.output (always available)
 //
 // Run: uv run python -m attractor_pipeline.cli run examples/compound_conditions.dot
 
@@ -43,7 +46,8 @@ digraph CompoundConditions {
 
     // ── Step 1: LLM writes the code to a file ───────────────────────────────
     //
-    // We use ${goal} (braced form) embedded in the middle of a sentence.
+    // ${goal} (braced form) is used here to demonstrate that braced and bare
+    // forms are equivalent, but braced is safer when adjacent to other text.
 
     implement [
         shape=box,
@@ -52,25 +56,28 @@ digraph CompoundConditions {
 
     // ── Step 2: Tool node verifies the written file ──────────────────────────
     //
-    // Checks two things and outputs a SINGLE word ("pass" or "fail") to stdout.
-    // Exit code 0 → outcome=success, exit code 1 → outcome=fail.
-    // The output is stored as tool.verify.output regardless of exit code.
+    // Spec §4.10: tool.<id>.output is ONLY written to context on exit code 0.
+    // On failure (exit 1), outcome=fail and no context key is set.
+    //
+    // This is intentional: the compound condition below checks
+    // tool.verify.output on the SUCCESS edge only, where the value IS set.
 
     verify [
         shape=parallelogram,
-        label="Compile + count",
-        tool_command="python3 -c \"\nimport ast, sys\ntry:\n    with open('reverse_str.py') as f:\n        src = f.read()\n    tree = ast.parse(src)\n    fns = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]\n    if 'reverse_str' not in fns or 'is_palindrome' not in fns:\n        print('fail')\n        print(f'Missing functions. Found: {fns}', file=sys.stderr)\n        sys.exit(1)\n    # Quick smoke test: import and call\n    import importlib.util, os\n    spec = importlib.util.spec_from_file_location('reverse_str', 'reverse_str.py')\n    mod = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(mod)\n    assert mod.reverse_str('hello') == 'olleh'\n    assert mod.is_palindrome('racecar') is True\n    assert mod.is_palindrome('hello') is False\n    print('pass')\nexcept Exception as e:\n    print('fail')\n    print(f'Error: {e}', file=sys.stderr)\n    sys.exit(1)\n\"",
+        label="Compile + smoke test",
+        tool_command="python3 -c \"\nimport ast, sys\ntry:\n    with open('reverse_str.py') as f:\n        src = f.read()\n    tree = ast.parse(src)\n    fns = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]\n    if 'reverse_str' not in fns or 'is_palindrome' not in fns:\n        print(f'Missing functions. Found: {fns}', file=sys.stderr)\n        sys.exit(1)\n    import importlib.util\n    spec = importlib.util.spec_from_file_location('reverse_str', 'reverse_str.py')\n    mod = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(mod)\n    assert mod.reverse_str('hello') == 'olleh'\n    assert mod.is_palindrome('racecar') is True\n    assert mod.is_palindrome('hello') is False\n    print('pass')\nexcept Exception as e:\n    print(f'Error: {e}', file=sys.stderr)\n    sys.exit(1)\n\"",
         timeout="15s"
     ]
 
-    // ── Fix node: only reached when verify outputs "fail" ───────────────────
+    // ── Fix node: reached when verify exits non-zero ─────────────────────────
     //
-    // $tool.verify.output expands to the tool's stdout ("fail")
-    // $codergen.implement.output expands to what the LLM wrote
+    // tool.verify.output is NOT available here (spec §4.10: only set on
+    // success). Use $codergen.implement.output instead — it is always set
+    // after a box node runs, regardless of the outcome of later nodes.
 
     fix [
         shape=box,
-        prompt="The module failed verification.\n\nVerification result: $tool.verify.output\n\nPrevious implementation:\n$codergen.implement.output\n\nFix the module. Ensure both reverse_str() and is_palindrome() are present and correct. Overwrite reverse_str.py."
+        prompt="The module failed verification.\n\nPrevious implementation:\n$codergen.implement.output\n\nFix the module. Ensure both reverse_str() and is_palindrome() are present and correct:\n  reverse_str('hello') == 'olleh'\n  is_palindrome('racecar') == True\n  is_palindrome('hello') == False\n\nOverwrite reverse_str.py with the corrected version."
     ]
 
     done [shape=Msquare, label="Verified"]
@@ -78,12 +85,14 @@ digraph CompoundConditions {
     // ── Flow with compound conditions ─────────────────────────────────────────
     //
     // COMPOUND CONDITION on the done edge:
-    //   outcome = success   → tool exited 0
+    //   outcome = success        → tool exited 0
     //   AND
-    //   tool.verify.output = pass  → tool explicitly printed "pass"
+    //   tool.verify.output = pass → tool printed "pass" (only set on exit 0)
     //
-    // Both must hold. This guards against tool nodes that exit 0 but signal
-    // failure through their output content.
+    // The two clauses are redundant here (exit 0 implies "pass" was printed),
+    // but they demonstrate that ANY context key can be used in conditions —
+    // not just "outcome". A missing key evaluates to false, so the condition
+    // fails safely if the tool didn't run.
 
     start     -> implement
     implement -> verify

@@ -2128,3 +2128,60 @@ class TestKnowledgeCutoffWiring:
                       "untracked_count": 0, "recent_commits": []},
         )
         assert "Knowledge cutoff" not in result
+
+
+# ================================================================== #
+# §4.10 ToolHandler — context_updates only on success
+# ================================================================== #
+
+
+class TestToolHandlerContextSpec:
+    """§4.10: tool.<id>.output is set in context ONLY on exit code 0.
+
+    On failure the handler returns Outcome(status=FAIL) with NO context
+    update — downstream nodes on the failure edge cannot reference the
+    tool's stdout via $tool.<id>.output.
+    """
+
+    @pytest.mark.asyncio
+    async def test_output_stored_in_context_on_success(self):
+        """Exit 0: tool.<id>.output written to context."""
+        from attractor_pipeline import parse_dot, run_pipeline, HandlerRegistry
+        from attractor_pipeline.handlers import register_default_handlers
+        from attractor_pipeline.engine.runner import PipelineStatus
+
+        g = parse_dot("""
+        digraph T {
+            start [shape=Mdiamond]
+            t [shape=parallelogram, tool_command="echo hello_spec"]
+            done [shape=Msquare]
+            start -> t -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+        result = await run_pipeline(g, registry)
+        assert result.status == PipelineStatus.COMPLETED
+        assert "hello_spec" in result.context.get("tool.t.output", "")
+
+    @pytest.mark.asyncio
+    async def test_output_not_stored_in_context_on_failure(self):
+        """Exit non-zero: tool.<id>.output NOT written to context (spec §4.10)."""
+        from attractor_pipeline import parse_dot, run_pipeline, HandlerRegistry
+        from attractor_pipeline.handlers import register_default_handlers
+        from attractor_pipeline.engine.runner import PipelineStatus
+
+        g = parse_dot("""
+        digraph T {
+            start [shape=Mdiamond]
+            t [shape=parallelogram, tool_command="exit 1"]
+            done [shape=Msquare]
+            start -> t [condition="outcome = fail"]
+            t -> done
+        }
+        """)
+        registry = HandlerRegistry()
+        register_default_handlers(registry)
+        result = await run_pipeline(g, registry)
+        # tool.t.output must NOT be set — spec §4.10 context_updates on success only
+        assert "tool.t.output" not in result.context

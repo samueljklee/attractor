@@ -23,7 +23,7 @@ class TestModelCatalog:
 
     def test_list_all_models(self):
         models = list_models()
-        assert len(models) == 9  # 2 anthropic + 3 openai + 4 gemini
+        assert len(models) == 10  # 2 anthropic + 4 openai + 4 gemini
 
     def test_list_by_provider(self):
         anthropic = list_models("anthropic")
@@ -31,7 +31,7 @@ class TestModelCatalog:
         assert all(m.provider == "anthropic" for m in anthropic)
 
         openai = list_models("openai")
-        assert len(openai) == 3
+        assert len(openai) == 4  # gpt-5.2, gpt-5.2-mini, gpt-4.1-mini, gpt-5.2-codex
         assert all(m.provider == "openai" for m in openai)
 
         gemini = list_models("gemini")

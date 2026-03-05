@@ -158,11 +158,12 @@ class ToolHandler:
         if result.stderr:
             output += f"\nSTDERR:\n{result.stderr}"
 
-        # Always store output in context so downstream nodes can reference it
-        # with $tool.<id>.output — even when the command fails.
-        context[f"tool.{node.id}.output"] = output.strip()
-
         if result.returncode == 0:
+            # Spec §4.10: context_updates only on SUCCESS.
+            # tool.<id>.output is only available to downstream nodes on the
+            # success path (outcome = success edges). Fix nodes on the failure
+            # path should use $codergen.<id>.output or other context already set.
+            context[f"tool.{node.id}.output"] = output.strip()
             return HandlerResult(
                 status=Outcome.SUCCESS,
                 output=output,
